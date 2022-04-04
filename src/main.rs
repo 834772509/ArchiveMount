@@ -16,7 +16,7 @@ extern crate widestring;
 
 use std::time::Duration;
 use std::{env, fs};
-use std::path::{PathBuf, Path};
+use std::path::{PathBuf};
 use rust_embed::RustEmbed;
 use utils::util::{convert_str, installDokanDriver};
 use dokan::{Drive, unmount, MountFlags, driver_version, set_lib_debug_mode, set_driver_debug_mode};
@@ -41,19 +41,20 @@ pub struct Asset;
 #[folder = "./assets-ARM64"]
 pub struct Asset;
 
-// 设置静态变量
 #[macro_use]
 extern crate lazy_static;
 extern crate chrono;
 extern crate console;
 extern crate winapi;
+
+// 设置静态变量
 lazy_static! {
     pub static ref TEMP_PATH: PathBuf = PathBuf::from(env::var("temp").unwrap()).join("ArchiveMount");
 }
 
 fn main() {
     if driver_version() == 0 {
-        println!("{:?}", installDokanDriver());
+        println!("安装驱动: {:?}", installDokanDriver());
     }
     println!("驱动版本：{}", driver_version());
 
@@ -74,7 +75,7 @@ fn main() {
     // 挂载
     let result = Drive::new()
         // 线程数(0为自动)
-        .thread_count(0)
+        .thread_count(1)
         // 文件系统模式
         // .flags(MountFlags::WRITE_PROTECT | MountFlags::MOUNT_MANAGER | MountFlags::DEBUG | MountFlags::STDERR)
         .flags(MountFlags::WRITE_PROTECT | MountFlags::MOUNT_MANAGER)

@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::{Path};
 use std::error::Error;
 use std::fs::File;
 use widestring::U16CString;
@@ -18,18 +18,18 @@ pub fn writeEmbedFile(filePath: &str, outFilePath: &Path) -> Result<(), Box<dyn 
 /// 安装Dokan驱动
 pub fn installDokanDriver() -> Result<bool, Box<dyn Error>> {
     // 1. dokan1.sys释放至C:\windows\system32\drivers\dokan1.sys
+    writeEmbedFile("dokan1.sys", &Path::new(&env::var("windir")?).join(r"System32\drivers\dokan1.sys"))?;
+
     // 2. 释放 dokanctl.exe、dokan1.dll，执行 dokanctl.exe /i d
-    // writeEmbedFile("dokan1.sys", &Path::new(&env::var("windir")?).join(r"System32\drivers\dokan1.sys"))?;
-    // writeEmbedFile("dokan1.dll", &*PathBuf::from(&TEMP_PATH).join("dokan1.dll"))?;
-    // let dokanctl = Path::new(&TEMP_PATH).join("dokanctl.exe");
-    // writeEmbedFile("dokanctl.exe", &dokanctl)?;
-    // let output = Command::new(&dokanctl)
-    //     .arg("/i")
-    //     .arg("d")
-    //     .output()?;
-    // let content = String::from_utf8_lossy(&output.stdout);
-    // Ok(content.contains("succeeded"));
-    return Ok(false);
+    let dokanctl = &TEMP_PATH.join("dokanctl.exe");
+    writeEmbedFile("dokan1.dll", &TEMP_PATH.join("dokan1.dll"))?;
+    writeEmbedFile("dokanctl.exe", &dokanctl)?;
+    let output = Command::new(&dokanctl)
+        .arg("/i")
+        .arg("d")
+        .output()?;
+    let content = String::from_utf8_lossy(&output.stdout);
+    Ok(content.contains("succeeded"))
 }
 
 pub fn convert_str(s: impl AsRef<str>) -> U16CString {
