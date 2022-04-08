@@ -1,17 +1,15 @@
 use std::path::{PathBuf, Path};
 use std::fs;
 use std::os::windows::fs::FileExt;
-use std::time::{Duration, UNIX_EPOCH};
-use crate::utils::util::convert_str;
-use crate::sevenzip::sevenZip;
-use crate::sevenzip::ArchiveFileInfo;
+use std::time::{UNIX_EPOCH};
+use crate::utils::util::{convert_str, StringToSystemTime};
+use crate::sevenzip::{sevenZip, ArchiveFileInfo};
 use crate::utils::console::{writeConsole, ConsoleType};
 use dokan::{FileSystemHandler, DOKAN_IO_SECURITY_CONTEXT, CreateFileInfo, OperationInfo, OperationError, FileInfo, FindData, FillDataError, VolumeInfo, DiskSpaceInfo, FileTimeInfo, FindStreamData};
 use widestring::{U16CStr};
-use winapi::shared::ntstatus::{STATUS_ACCESS_DENIED, STATUS_NOT_IMPLEMENTED, STATUS_DISK_FULL, STATUS_SUCCESS, STATUS_NDIS_FILE_NOT_FOUND};
-use winapi::um::winnt::{FILE_CASE_PRESERVED_NAMES, FILE_UNICODE_ON_DISK, FILE_READ_ONLY_VOLUME, FILE_VOLUME_IS_COMPRESSED};
-use std::ffi::c_void;
-use std::fs::File;
+use winapi::shared::ntstatus::{STATUS_ACCESS_DENIED, STATUS_NOT_IMPLEMENTED, STATUS_NDIS_FILE_NOT_FOUND, STATUS_INVALID_DEVICE_REQUEST, STATUS_OBJECT_NAME_NOT_FOUND};
+use winapi::um::winnt::{FILE_CASE_PRESERVED_NAMES, FILE_UNICODE_ON_DISK, FILE_READ_ONLY_VOLUME, FILE_VOLUME_IS_COMPRESSED, FILE_PERSISTENT_ACLS};
+use std::ffi::{c_void};
 
 #[derive(Debug)]
 pub struct ArchiveFS {
@@ -21,26 +19,26 @@ pub struct ArchiveFS {
     archivePath: PathBuf,
     /// 临时释放路径
     extractPath: PathBuf,
-    /// 挂载路径根文件名
-    parentName: String,
     /// 压缩包文件信息
     archiveFileInfoList: Vec<ArchiveFileInfo>,
 }
 
 impl ArchiveFS {
-    pub(crate) fn new(archivePath: &Path, extractPath: &Path, parentName: &str) -> ArchiveFS {
+    pub(crate) fn new(archivePath: &Path, extractPath: &Path, password: Option<&str>) -> ArchiveFS {
         ArchiveFS {
             sevenZip: sevenZip::new().unwrap(),
             archivePath: (*archivePath.to_path_buf()).to_owned(),
             extractPath: (*extractPath.to_path_buf()).to_owned(),
-            parentName: parentName.to_string(),
-            archiveFileInfoList: sevenZip::new().unwrap().listArchiveFiles(archivePath).unwrap(),
+            archiveFileInfoList: sevenZip::new().unwrap().listArchiveFiles(archivePath, password).unwrap(),
         }
     }
 }
 
 #[derive(Debug)]
-pub struct SevenContext {}
+pub struct SevenContext {
+    localFilePath: PathBuf,
+    FileInfo: ArchiveFileInfo,
+}
 
 const FILE_ATTRIBUTES_ARCHIVE: u32 = 32;
 const FILE_ATTRIBUTES_DIRECTORY: u32 = 16;
@@ -58,46 +56,40 @@ const FILE_OVERWRITE_IF: u32 = 5;
 const FILE_MAXIMUM_DISPOSITION: u32 = 5;
 
 impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for ArchiveFS {
-    type Context = Option<File>;
+    type Context = Option<SevenContext>;
 
     // 创建文件对象时调用
-    fn create_file(&'b self,
-                   file_name: &U16CStr, security_context: &DOKAN_IO_SECURITY_CONTEXT,
-                   _desired_access: u32, _file_attributes: u32, _share_access: u32,
-                   create_disposition: u32,
-                   _create_options: u32, info: &mut OperationInfo<'a, 'b, Self>) -> Result<CreateFileInfo<Self::Context>, OperationError> {
+    fn create_file(&'b self, file_name: &U16CStr, _security_context: &DOKAN_IO_SECURITY_CONTEXT, _desired_access: u32, _file_attributes: u32, _share_access: u32, create_disposition: u32, _create_options: u32, _info: &mut OperationInfo<'a, 'b, Self>) -> Result<CreateFileInfo<Self::Context>, OperationError> {
         if create_disposition != FILE_OPEN && create_disposition != FILE_OPEN_IF {
             return Err(OperationError::NtStatus(STATUS_ACCESS_DENIED));
         }
 
         let file_name = file_name.to_string_lossy();
-        if file_name == "\\".to_string() || file_name == format!("\\{}", &self.parentName) {
+        if file_name == "\\".to_string() {
             return Ok(CreateFileInfo { context: None, is_dir: true, new_file_created: false });
         }
 
-        for item in self.archiveFileInfoList.iter() {
-            let file_name = file_name.trim_start_matches(format!("\\{}\\", self.parentName).as_str());
-            let localFilePath = &self.extractPath.join(file_name);
-
+        for item in &self.clone().archiveFileInfoList {
+            let file_name = file_name.trim_start_matches("\\");
+            let localFilePath = self.extractPath.join(file_name);
             if file_name == item.Path {
-                if !localFilePath.exists() && !self.sevenZip.extractFilesFromPath(&*self.archivePath, &*file_name, &self.extractPath).unwrap() {
-                    println!("File decompression failed");
-                    return Err(OperationError::NtStatus(STATUS_ACCESS_DENIED));
+                if !&item.is_dir && !localFilePath.exists() {
+                    // 解压文件
+                    writeConsole(ConsoleType::Info, &*format!("unzip files: {}\\{}", &*self.archivePath.to_str().unwrap(), &*file_name));
+                    if !self.sevenZip.extractFilesFromPath(&*self.archivePath, &*file_name, &self.extractPath).unwrap() && !localFilePath.exists() {
+                        println!("File decompression failed");
+                        return Err(OperationError::NtStatus(STATUS_ACCESS_DENIED));
+                    }
                 }
                 return Ok(CreateFileInfo {
-                    context: Some(fs::File::open(localFilePath).unwrap()),
-                    is_dir: false,
+                    context: Some(SevenContext { localFilePath, FileInfo: item.clone() }),
+                    is_dir: item.is_dir.clone(),
                     new_file_created: false,
                 });
             }
         }
-
-        // if file_name == r"\test.7z\程序文件.exe.Config".to_string() { return Ok(CreateFileInfo { context: None, is_dir: false, new_file_created: false }); }
-
-        println!("创建文件失败: {:?}", file_name);
-        return Err(OperationError::NtStatus(STATUS_NDIS_FILE_NOT_FOUND));
-        // return Err(OperationError::NtStatus(STATUS_DISK_FULL));
-        // return Err(OperationError::NtStatus(STATUS_ACCESS_DENIED));
+        // println!("创建文件失败: {}", file_name);
+        return Err(OperationError::NtStatus(STATUS_OBJECT_NAME_NOT_FOUND));
     }
 
     fn cleanup(&'b self, _file_name: &U16CStr, _info: &OperationInfo<'a, 'b, Self>, _context: &'a Self::Context) {}
@@ -107,13 +99,13 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for ArchiveFS {
     /// 读取文件
     fn read_file(&'b self, file_name: &U16CStr, offset: i64, buffer: &mut [u8], _info: &OperationInfo<'a, 'b, Self>, context: &'a Self::Context) -> Result<u32, OperationError> {
         let file_name = file_name.to_string_lossy();
-        // println!("读取文件: {}, buffer Size: {}, offset: {}", file_name.to_string_lossy(), buffer.len(), offset);
-        if let Some(file) = context {
+        if let Some(context) = context {
+            let file = fs::File::open(&context.localFilePath).unwrap();
             let result = file.seek_read(buffer, offset as u64).unwrap();
             return Ok(result as u32);
         }
         println!("读取文件失败: {}", file_name);
-        Err(OperationError::NtStatus(STATUS_ACCESS_DENIED))
+        Err(OperationError::NtStatus(STATUS_INVALID_DEVICE_REQUEST))
     }
 
     fn write_file(&'b self, _file_name: &U16CStr, _offset: i64, _buffer: &[u8], _info: &OperationInfo<'a, 'b, Self>, _context: &'a Self::Context) -> Result<u32, OperationError> {
@@ -125,89 +117,47 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for ArchiveFS {
     }
 
     // 获取文件信息
-    fn get_file_information(&'b self, file_name: &U16CStr, _info: &OperationInfo<'a, 'b, Self>, _context: &'a Self::Context) -> Result<FileInfo, OperationError> {
+    fn get_file_information(&'b self, file_name: &U16CStr, _info: &OperationInfo<'a, 'b, Self>, context: &'a Self::Context) -> Result<FileInfo, OperationError> {
         let file_name = file_name.to_string_lossy();
-        if file_name == r"\".to_string() || file_name == format!(r"\{}", &self.parentName) {
+        // 判断目录
+        if file_name == r"\".to_string() {
+            return Ok(FileInfo { attributes: FILE_ATTRIBUTES_DIRECTORY, creation_time: UNIX_EPOCH, last_access_time: UNIX_EPOCH, last_write_time: UNIX_EPOCH, file_size: 0, number_of_links: 0, file_index: 0 });
+        }
+
+        if let Some(context) = context {
             return Ok(FileInfo {
-                // https://docs.microsoft.com/en-us/windows/win32/fileio/file-attribute-constants
-                attributes: FILE_ATTRIBUTES_DIRECTORY,
-                creation_time: UNIX_EPOCH,
-                last_access_time: UNIX_EPOCH + Duration::from_secs(1),
-                last_write_time: UNIX_EPOCH + Duration::from_secs(2),
-                file_size: 0,
+                attributes: if context.FileInfo.is_dir { FILE_ATTRIBUTES_DIRECTORY } else { FILE_ATTRIBUTES_NORMAL },
+                creation_time: StringToSystemTime(&*context.FileInfo.Modified),
+                last_access_time: StringToSystemTime(&*context.FileInfo.Modified),
+                last_write_time: StringToSystemTime(&*context.FileInfo.Modified),
+                file_size: context.FileInfo.Size.clone(),
                 number_of_links: 0,
                 file_index: 0,
             });
         }
-        // 获取实际相对路径
-        let file_name = file_name.trim_start_matches(format!("\\{}\\", self.parentName).as_str());
-
-        for item in self.archiveFileInfoList.iter() {
-            if file_name == item.Path {
-                return Ok(FileInfo {
-                    // https://docs.microsoft.com/en-us/windows/win32/fileio/file-attribute-constants
-                    attributes: if item.Attributes == "D" { FILE_ATTRIBUTES_DIRECTORY } else { FILE_ATTRIBUTES_NORMAL },
-                    creation_time: UNIX_EPOCH,
-                    last_access_time: UNIX_EPOCH + Duration::from_secs(1),
-                    last_write_time: UNIX_EPOCH + Duration::from_secs(2),
-                    file_size: item.Size,
-                    number_of_links: 0,
-                    file_index: item.Size * 2,
-                });
-            }
-        }
-        println!("查看文件信息错误: {}", file_name);
         return Err(OperationError::NtStatus(STATUS_NDIS_FILE_NOT_FOUND));
     }
 
     // 列出目录中的所有子项
     fn find_files(&'b self, file_name: &U16CStr, mut fill_find_data: impl FnMut(&FindData) -> Result<(), FillDataError>, _info: &OperationInfo<'a, 'b, Self>, _context: &'a Self::Context) -> Result<(), OperationError> {
         let path = file_name.to_string_lossy();
-
-        // 挂载根路径显示 压缩包名.格式 目录
-        if path == "\\".to_string() {
-            fill_find_data(&FindData {
-                attributes: FILE_ATTRIBUTES_DIRECTORY,
-                creation_time: UNIX_EPOCH,
-                last_access_time: UNIX_EPOCH + Duration::from_secs(1),
-                last_write_time: UNIX_EPOCH + Duration::from_secs(2),
-                file_size: self.archivePath.metadata().unwrap().len(),
-                file_name: convert_str(&self.parentName),
-            })?;
-            return Ok(());
-        }
-
         // 列出压缩包内文件结构
         for item in self.archiveFileInfoList.iter() {
-            let filePath = format!(r"\{}\{}", &self.parentName, item.Path);
+            let filePath = format!(r"\{}", item.Path);
             // 筛选出匹配的文件(前面匹配、不等于自身、父路径匹配)
             if filePath.find(&path) == Some(0) && filePath != path && Path::new(&filePath).parent().unwrap().to_str().unwrap() == &path {
                 let fileName = Path::new(&item.Path).file_name().unwrap().to_str().unwrap();
                 fill_find_data(&FindData {
-                    attributes: if item.Attributes == "D" { FILE_ATTRIBUTES_DIRECTORY } else { FILE_ATTRIBUTES_NORMAL },
-                    creation_time: UNIX_EPOCH,
-                    last_access_time: UNIX_EPOCH + Duration::from_secs(1),
-                    last_write_time: UNIX_EPOCH + Duration::from_secs(2),
+                    attributes: if item.is_dir { FILE_ATTRIBUTES_DIRECTORY } else { FILE_ATTRIBUTES_NORMAL },
+                    creation_time: StringToSystemTime(&*item.Modified),
+                    last_access_time: StringToSystemTime(&*item.Modified),
+                    last_write_time: StringToSystemTime(&*item.Modified),
                     file_size: item.Size,
                     file_name: convert_str(fileName),
                 })?;
             }
         }
-
-        if path == format!(r"\{}", &self.parentName).to_string() {
-            fill_find_data(&FindData {
-                attributes: FILE_ATTRIBUTES_DIRECTORY,
-                creation_time: UNIX_EPOCH,
-                last_access_time: UNIX_EPOCH + Duration::from_secs(1),
-                last_write_time: UNIX_EPOCH + Duration::from_secs(2),
-                file_size: 0,
-                file_name: convert_str(&self.parentName),
-            })?;
-            return Ok(());
-        }
-
-        println!("枚举路径失败: {}", &path);
-        return Err(OperationError::NtStatus(STATUS_ACCESS_DENIED));
+        return Ok(());
     }
 
     fn find_files_with_pattern(&'b self, _file_name: &U16CStr, _pattern: &U16CStr, _fill_find_data: impl FnMut(&FindData) -> Result<(), FillDataError>, _info: &OperationInfo<'a, 'b, Self>, _context: &'a Self::Context) -> Result<(), OperationError> {
@@ -266,9 +216,9 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for ArchiveFS {
     fn get_volume_information(&'b self, _info: &OperationInfo<'a, 'b, Self>) -> Result<VolumeInfo, OperationError> {
         Ok(VolumeInfo {
             name: convert_str("ArchiveMount"),
-            serial_number: 1,
+            serial_number: 0,
             max_component_length: 255,
-            fs_flags: FILE_CASE_PRESERVED_NAMES | FILE_UNICODE_ON_DISK | FILE_VOLUME_IS_COMPRESSED | FILE_READ_ONLY_VOLUME,
+            fs_flags: FILE_CASE_PRESERVED_NAMES | FILE_UNICODE_ON_DISK | FILE_VOLUME_IS_COMPRESSED | FILE_READ_ONLY_VOLUME | FILE_PERSISTENT_ACLS,
             fs_name: convert_str("NTFS"),
         })
     }
@@ -281,22 +231,24 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for ArchiveFS {
         Ok(())
     }
 
-    // 设置可执行文件安全信息
-    fn get_file_security(&'b self, file_name: &U16CStr, _security_information: u32, security_descriptor: *mut c_void, _buffer_length: u32, _info: &OperationInfo<'a, 'b, Self>, context: &'a Self::Context) -> Result<u32, OperationError> {
-        let file_name = file_name.to_string_lossy();
-        if let Some(file) = context {
-            unsafe {
-                // winapi::um::securitybaseapi::GetFileSecurityW(
-                //     aaa,
-                //     bbb,
-                //     ccc,
-                //     ddd,
-                //     eee,
-                // );
-            }
-        }
-        println!("获取安全信息失败: {}", file_name);
+    // 获取可执行文件安全信息
+    fn get_file_security(&'b self, _file_name: &U16CStr, _security_information: u32, _security_descriptor: *mut c_void, _buffer_length: u32, _info: &OperationInfo<'a, 'b, Self>, _context: &'a Self::Context) -> Result<u32, OperationError> {
         return Err(OperationError::NtStatus(STATUS_NOT_IMPLEMENTED));
+        // let file_name = file_name.to_string_lossy();
+        // for item in self.archiveFileInfoList.iter() {
+        //     let file_name = file_name.trim_start_matches(format!("\\{}\\", self.parentName).as_str());
+        //     let localFilePath = &self.extractPath.join(file_name);
+        //     if file_name == item.Path {
+        //         let fileName: Vec<u16> = OsStr::new(localFilePath).encode_wide().chain(once(0)).collect();
+        //         let mut needLength = buffer_length.clone();
+        //         unsafe {
+        //             winapi::um::securitybaseapi::GetFileSecurityW(fileName.as_ptr(), security_information, security_descriptor, buffer_length, &mut needLength);
+        //         }
+        //         return Ok(needLength);
+        //     }
+        // }
+        // println!("获取安全信息失败: {}", file_name);
+        // return Err(OperationError::NtStatus(STATUS_NOT_IMPLEMENTED));
     }
 
     fn set_file_security(&'b self, _file_name: &U16CStr, _security_information: u32, _security_descriptor: *mut c_void, _buffer_length: u32, _info: &OperationInfo<'a, 'b, Self>, _context: &'a Self::Context) -> Result<(), OperationError> {

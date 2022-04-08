@@ -5,8 +5,10 @@ use widestring::U16CString;
 use std::io::Write;
 use crate::Asset;
 use crate::TEMP_PATH;
-use std::env;
+use std::{env, fs};
 use std::process::Command;
+use std::time::SystemTime;
+use chrono::{NaiveDateTime, DateTime, Local, TimeZone};
 
 /// 写到文件
 pub fn writeEmbedFile(filePath: &str, outFilePath: &Path) -> Result<(), Box<dyn Error>> {
@@ -18,12 +20,14 @@ pub fn writeEmbedFile(filePath: &str, outFilePath: &Path) -> Result<(), Box<dyn 
 /// 安装Dokan驱动
 pub fn installDokanDriver() -> Result<bool, Box<dyn Error>> {
     // 1. dokan1.sys释放至C:\windows\system32\drivers\dokan1.sys
-    writeEmbedFile("dokan1.sys", &Path::new(&env::var("windir")?).join(r"System32\drivers\dokan1.sys"))?;
+    let _ = writeEmbedFile("dokan1.sys", &Path::new(&env::var("windir")?).join(r"System32\drivers\dokan1.sys"));
 
     // 2. 释放 dokanctl.exe、dokan1.dll，执行 dokanctl.exe /i d
     let dokanctl = &TEMP_PATH.join("dokanctl.exe");
-    writeEmbedFile("dokan1.dll", &TEMP_PATH.join("dokan1.dll"))?;
-    writeEmbedFile("dokanctl.exe", &dokanctl)?;
+    if !dokanctl.exists() {
+        writeEmbedFile("dokan1.dll", &TEMP_PATH.join("dokan1.dll"))?;
+        writeEmbedFile("dokanctl.exe", &dokanctl)?;
+    }
     let output = Command::new(&dokanctl)
         .arg("/i")
         .arg("d")
@@ -32,8 +36,30 @@ pub fn installDokanDriver() -> Result<bool, Box<dyn Error>> {
     Ok(content.contains("succeeded"))
 }
 
+/// 卸载Dokan驱动
+pub fn uninstallDokanDriver() -> Result<bool, Box<dyn Error>> {
+    let dokanctl = &TEMP_PATH.join("dokanctl.exe");
+    if !dokanctl.exists() {
+        writeEmbedFile("dokan1.dll", &TEMP_PATH.join("dokan1.dll"))?;
+        writeEmbedFile("dokanctl.exe", &dokanctl)?;
+    }
+    let output = Command::new(&dokanctl)
+        .arg("/r")
+        .arg("d")
+        .output()?;
+    let _ = fs::remove_file(&Path::new(&env::var("windir")?).join(r"System32\drivers\dokan1.sys"));
+    let content = String::from_utf8_lossy(&output.stdout);
+    Ok(content.contains("removed"))
+}
+
 pub fn convert_str(s: impl AsRef<str>) -> U16CString {
     unsafe { U16CString::from_str_unchecked(s) }
+}
+
+pub fn StringToSystemTime(time: &str) -> SystemTime {
+    let custom = NaiveDateTime::parse_from_str(time, "%Y-%m-%d %H:%M:%S").unwrap();
+    let date_time: DateTime<Local> = Local.from_local_datetime(&custom).unwrap();
+    return SystemTime::from(date_time);
 }
 
 // 增加字符串自定义方法

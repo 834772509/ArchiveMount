@@ -5,7 +5,7 @@ use std::process::Command;
 use crate::TEMP_PATH;
 use crate::utils::util::{writeEmbedFile, String_utils};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ArchiveFileInfo {
     /// 文件路径
     pub(crate) Path: String,
@@ -21,6 +21,8 @@ pub struct ArchiveFileInfo {
     pub(crate) Attributes: String,
     /// 是否加密
     pub(crate) Encrypted: bool,
+    /// 是否为目录
+    pub(crate) is_dir: bool,
     /// CRC校验码
     pub(crate) CRC: String,
     /// 压缩算法
@@ -44,9 +46,10 @@ impl sevenZip {
     }
 
     /// 列出压缩包文件列表
-    pub fn listArchiveFiles(&self, zipFile: &Path) -> Result<Vec<ArchiveFileInfo>, Box<dyn Error>> {
+    pub fn listArchiveFiles(&self, zipFile: &Path, password: Option<&str>) -> Result<Vec<ArchiveFileInfo>, Box<dyn Error>> {
         let output = Command::new(&self.zipProgram)
             .arg("l")
+            .arg(format!("-p{}", password.unwrap_or("")))
             .arg("-ba")
             .arg("-slt")
             .arg("-sccUTF-8")
@@ -74,6 +77,7 @@ impl sevenZip {
                 Created: created,
                 Attributes: item.get_string_center("Attributes = ", "\r\n").unwrap_or_else(|_| "".to_string()),
                 Encrypted: false,
+                is_dir: item.get_string_center("Attributes = ", "\r\n").unwrap_or_else(|_| "".to_string()).contains("D"),
                 CRC: item.get_string_center("CRC = ", "\r\n").unwrap_or_else(|_| "".to_string()),
                 Method: item.get_string_center("Method = ", "\r\n").unwrap_or_else(|_| "".to_string()),
             });

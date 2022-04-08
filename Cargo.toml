@@ -14,9 +14,8 @@ lto = true
 codegen-units = 1
 panic = 'abort'
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [dependencies]
-clap = { version = "3.1.6", features = ["derive"] }
+clap = { version = "3.1.8", features = ["derive"] }
 vc-ltl = "5.0.3"
 console = "0.15.0"
 rust-embed = "6.3.0"
@@ -26,7 +25,3 @@ widestring = "0.4.3"
 winapi = { version = "0.3.9", features = ["ntstatus"] }
 # 目前Dokan未适配V2.0支持
 dokan = "0.2.0+dokan150"
-
-#vfs = "0.6.2"
-#vfs-zip = "0.2.1"
-#gvfs = "0.1.2"
