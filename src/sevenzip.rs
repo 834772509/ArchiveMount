@@ -1,7 +1,7 @@
-use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::error::Error;
 use crate::TEMP_PATH;
 use crate::utils::util::{writeEmbedFile, String_utils};
 
@@ -77,7 +77,7 @@ impl sevenZip {
                 Created: created,
                 Attributes: item.get_string_center("Attributes = ", "\r\n").unwrap_or_else(|_| "".to_string()),
                 Encrypted: false,
-                is_dir: item.get_string_center("Attributes = ", "\r\n").unwrap_or_else(|_| "".to_string()).contains("D"),
+                is_dir: item.get_string_center("Attributes = ", "\r\n").unwrap_or_else(|_| "".to_string()).contains('D'),
                 CRC: item.get_string_center("CRC = ", "\r\n").unwrap_or_else(|_| "".to_string()),
                 Method: item.get_string_center("Method = ", "\r\n").unwrap_or_else(|_| "".to_string()),
             });

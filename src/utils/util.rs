@@ -1,13 +1,13 @@
 use std::path::{Path};
 use std::error::Error;
 use std::fs::File;
-use widestring::U16CString;
 use std::io::Write;
-use crate::Asset;
-use crate::TEMP_PATH;
 use std::{env, fs};
 use std::process::Command;
 use std::time::SystemTime;
+use crate::Asset;
+use crate::TEMP_PATH;
+use widestring::U16CString;
 use chrono::{NaiveDateTime, DateTime, Local, TimeZone};
 
 /// 写到文件
@@ -26,9 +26,9 @@ pub fn installDokanDriver() -> Result<bool, Box<dyn Error>> {
     let dokanctl = &TEMP_PATH.join("dokanctl.exe");
     if !dokanctl.exists() {
         writeEmbedFile("dokan1.dll", &TEMP_PATH.join("dokan1.dll"))?;
-        writeEmbedFile("dokanctl.exe", &dokanctl)?;
+        writeEmbedFile("dokanctl.exe", dokanctl)?;
     }
-    let output = Command::new(&dokanctl)
+    let output = Command::new(dokanctl)
         .arg("/i")
         .arg("d")
         .output()?;
@@ -41,7 +41,7 @@ pub fn uninstallDokanDriver() -> Result<bool, Box<dyn Error>> {
     let dokanctl = &TEMP_PATH.join("dokanctl.exe");
     if !dokanctl.exists() {
         writeEmbedFile("dokan1.dll", &TEMP_PATH.join("dokan1.dll"))?;
-        writeEmbedFile("dokanctl.exe", &dokanctl)?;
+        writeEmbedFile("dokanctl.exe", dokanctl)?;
     }
     let output = Command::new(&dokanctl)
         .arg("/r")
@@ -59,7 +59,7 @@ pub fn convert_str(s: impl AsRef<str>) -> U16CString {
 pub fn StringToSystemTime(time: &str) -> SystemTime {
     let custom = NaiveDateTime::parse_from_str(time, "%Y-%m-%d %H:%M:%S").unwrap();
     let date_time: DateTime<Local> = Local.from_local_datetime(&custom).unwrap();
-    return SystemTime::from(date_time);
+    SystemTime::from(date_time)
 }
 
 // 增加字符串自定义方法

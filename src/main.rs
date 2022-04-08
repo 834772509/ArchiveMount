@@ -89,9 +89,6 @@ enum Commands {
         /// mount path
         mountPath: PathBuf,
     },
-    test {
-        name: Option<PathBuf>
-    },
 }
 
 fn main() {
@@ -134,7 +131,7 @@ fn main() {
             let mountPath = &convert_str(mountPath.to_str().unwrap());
             let extractPath = if let Some(tempPath) = tempPath { tempPath.clone() } else { TEMP_PATH.join("ArchiveTemp") };
             let extractPath = extractPath.join(&archivePath.file_name().unwrap());
-            let password = if let Some(password) =  password { Some(password.as_str()) } else { None };
+            let password = password.as_ref().map(|password| password.as_str());
 
             let _result = Drive::new()
                 // 线程数(0为自动)
@@ -159,12 +156,8 @@ fn main() {
             }
             writeConsole(ConsoleType::Err, "unmount failed");
         }
-        Commands::test { name } => {
-            println!("{:?}", name);
-        }
     }
     // 清除临时目录
     if TEMP_PATH.exists() { let _ = fs::remove_dir_all(&*TEMP_PATH); }
     let _ = fs::remove_file("./dokan1.dll");
-    return;
 }

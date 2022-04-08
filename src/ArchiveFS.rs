@@ -2,6 +2,7 @@ use std::path::{PathBuf, Path};
 use std::fs;
 use std::os::windows::fs::FileExt;
 use std::time::{UNIX_EPOCH};
+use std::ffi::{c_void};
 use crate::utils::util::{convert_str, StringToSystemTime};
 use crate::sevenzip::{sevenZip, ArchiveFileInfo};
 use crate::utils::console::{writeConsole, ConsoleType};
@@ -9,7 +10,6 @@ use dokan::{FileSystemHandler, DOKAN_IO_SECURITY_CONTEXT, CreateFileInfo, Operat
 use widestring::{U16CStr};
 use winapi::shared::ntstatus::{STATUS_ACCESS_DENIED, STATUS_NOT_IMPLEMENTED, STATUS_NDIS_FILE_NOT_FOUND, STATUS_INVALID_DEVICE_REQUEST, STATUS_OBJECT_NAME_NOT_FOUND};
 use winapi::um::winnt::{FILE_CASE_PRESERVED_NAMES, FILE_UNICODE_ON_DISK, FILE_READ_ONLY_VOLUME, FILE_VOLUME_IS_COMPRESSED, FILE_PERSISTENT_ACLS};
-use std::ffi::{c_void};
 
 #[derive(Debug)]
 pub struct ArchiveFS {
@@ -65,12 +65,12 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for ArchiveFS {
         }
 
         let file_name = file_name.to_string_lossy();
-        if file_name == "\\".to_string() {
+        if file_name == *"\\" {
             return Ok(CreateFileInfo { context: None, is_dir: true, new_file_created: false });
         }
 
-        for item in &self.clone().archiveFileInfoList {
-            let file_name = file_name.trim_start_matches("\\");
+        for item in self.clone().archiveFileInfoList.iter() {
+            let file_name = file_name.trim_start_matches('\\');
             let localFilePath = self.extractPath.join(file_name);
             if file_name == item.Path {
                 if !&item.is_dir && !localFilePath.exists() {
@@ -83,13 +83,13 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for ArchiveFS {
                 }
                 return Ok(CreateFileInfo {
                     context: Some(SevenContext { localFilePath, FileInfo: item.clone() }),
-                    is_dir: item.is_dir.clone(),
+                    is_dir: item.is_dir,
                     new_file_created: false,
                 });
             }
         }
         // println!("创建文件失败: {}", file_name);
-        return Err(OperationError::NtStatus(STATUS_OBJECT_NAME_NOT_FOUND));
+        Err(OperationError::NtStatus(STATUS_OBJECT_NAME_NOT_FOUND))
     }
 
     fn cleanup(&'b self, _file_name: &U16CStr, _info: &OperationInfo<'a, 'b, Self>, _context: &'a Self::Context) {}
@@ -113,14 +113,14 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for ArchiveFS {
     }
 
     fn flush_file_buffers(&'b self, _file_name: &U16CStr, _info: &OperationInfo<'a, 'b, Self>, _context: &'a Self::Context) -> Result<(), OperationError> {
-        return Err(OperationError::NtStatus(STATUS_NOT_IMPLEMENTED));
+        Err(OperationError::NtStatus(STATUS_NOT_IMPLEMENTED))
     }
 
     // 获取文件信息
     fn get_file_information(&'b self, file_name: &U16CStr, _info: &OperationInfo<'a, 'b, Self>, context: &'a Self::Context) -> Result<FileInfo, OperationError> {
         let file_name = file_name.to_string_lossy();
         // 判断目录
-        if file_name == r"\".to_string() {
+        if file_name == *"\\" {
             return Ok(FileInfo { attributes: FILE_ATTRIBUTES_DIRECTORY, creation_time: UNIX_EPOCH, last_access_time: UNIX_EPOCH, last_write_time: UNIX_EPOCH, file_size: 0, number_of_links: 0, file_index: 0 });
         }
 
@@ -130,12 +130,12 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for ArchiveFS {
                 creation_time: StringToSystemTime(&*context.FileInfo.Modified),
                 last_access_time: StringToSystemTime(&*context.FileInfo.Modified),
                 last_write_time: StringToSystemTime(&*context.FileInfo.Modified),
-                file_size: context.FileInfo.Size.clone(),
+                file_size: context.FileInfo.Size,
                 number_of_links: 0,
                 file_index: 0,
             });
         }
-        return Err(OperationError::NtStatus(STATUS_NDIS_FILE_NOT_FOUND));
+        Err(OperationError::NtStatus(STATUS_NDIS_FILE_NOT_FOUND))
     }
 
     // 列出目录中的所有子项
@@ -145,7 +145,7 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for ArchiveFS {
         for item in self.archiveFileInfoList.iter() {
             let filePath = format!(r"\{}", item.Path);
             // 筛选出匹配的文件(前面匹配、不等于自身、父路径匹配)
-            if filePath.find(&path) == Some(0) && filePath != path && Path::new(&filePath).parent().unwrap().to_str().unwrap() == &path {
+            if filePath.find(&path) == Some(0) && filePath != path && Path::new(&filePath).parent().unwrap().to_str().unwrap() == path {
                 let fileName = Path::new(&item.Path).file_name().unwrap().to_str().unwrap();
                 fill_find_data(&FindData {
                     attributes: if item.is_dir { FILE_ATTRIBUTES_DIRECTORY } else { FILE_ATTRIBUTES_NORMAL },
@@ -157,15 +157,15 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for ArchiveFS {
                 })?;
             }
         }
-        return Ok(());
+        Ok(())
     }
 
     fn find_files_with_pattern(&'b self, _file_name: &U16CStr, _pattern: &U16CStr, _fill_find_data: impl FnMut(&FindData) -> Result<(), FillDataError>, _info: &OperationInfo<'a, 'b, Self>, _context: &'a Self::Context) -> Result<(), OperationError> {
-        return Err(OperationError::NtStatus(STATUS_NOT_IMPLEMENTED));
+        Err(OperationError::NtStatus(STATUS_NOT_IMPLEMENTED))
     }
 
     fn set_file_attributes(&'b self, _file_name: &U16CStr, _file_attributes: u32, _info: &OperationInfo<'a, 'b, Self>, _context: &'a Self::Context) -> Result<(), OperationError> {
-        return Err(OperationError::NtStatus(STATUS_NOT_IMPLEMENTED));
+        Err(OperationError::NtStatus(STATUS_NOT_IMPLEMENTED))
     }
 
     fn set_file_time(&'b self, _file_name: &U16CStr, _creation_time: FileTimeInfo, _last_access_time: FileTimeInfo, _last_write_time: FileTimeInfo, _info: &OperationInfo<'a, 'b, Self>, _context: &'a Self::Context) -> Result<(), OperationError> {
@@ -233,7 +233,7 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for ArchiveFS {
 
     // 获取可执行文件安全信息
     fn get_file_security(&'b self, _file_name: &U16CStr, _security_information: u32, _security_descriptor: *mut c_void, _buffer_length: u32, _info: &OperationInfo<'a, 'b, Self>, _context: &'a Self::Context) -> Result<u32, OperationError> {
-        return Err(OperationError::NtStatus(STATUS_NOT_IMPLEMENTED));
+        Err(OperationError::NtStatus(STATUS_NOT_IMPLEMENTED))
         // let file_name = file_name.to_string_lossy();
         // for item in self.archiveFileInfoList.iter() {
         //     let file_name = file_name.trim_start_matches(format!("\\{}\\", self.parentName).as_str());
@@ -256,6 +256,6 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for ArchiveFS {
     }
 
     fn find_streams(&'b self, _file_name: &U16CStr, _fill_find_stream_data: impl FnMut(&FindStreamData) -> Result<(), FillDataError>, _info: &OperationInfo<'a, 'b, Self>, _context: &'a Self::Context) -> Result<(), OperationError> {
-        return Err(OperationError::NtStatus(STATUS_NOT_IMPLEMENTED));
+        Err(OperationError::NtStatus(STATUS_NOT_IMPLEMENTED))
     }
 }
