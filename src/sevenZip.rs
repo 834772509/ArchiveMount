@@ -1,11 +1,12 @@
+use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::error::Error;
-use crate::TEMP_PATH;
-use crate::utils::util::{writeEmbedFile, String_utils};
 
-#[derive(Debug, Clone)]
+use crate::TEMP_PATH;
+use crate::utils::util::{String_utils, writeEmbedFile};
+
+#[derive(Debug, Clone, Hash, Eq, PartialEq)]
 pub struct ArchiveFileInfo {
     /// 文件路径
     pub(crate) Path: String,
@@ -85,31 +86,6 @@ impl sevenZip {
         Ok(archiveFileInfoList)
     }
 
-    /// 7-zip 释放文件（指定压缩包内文件）
-    /// 从存档中提取文件（不使用目录名）
-    /// 注意：此命令会将压缩档案中的所有文件输出到同一个目录中
-    /// # 参数
-    /// 1. 压缩包路径
-    /// 2. 解压路径
-    /// 3. 输出路径
-    pub fn extractFiles(
-        &self,
-        zipFile: &Path,
-        extractPath: &str,
-        outPath: &Path,
-    ) -> Result<bool, Box<dyn Error>> {
-        let output = Command::new(&self.zipProgram)
-            .arg("e")
-            .arg(zipFile.to_str().unwrap())
-            .arg(&extractPath)
-            .arg("-y")
-            .arg("-aos")
-            .arg(format!("-o{}", outPath.to_str().unwrap()))
-            .output()?;
-        let content = String::from_utf8_lossy(&output.stdout);
-        Ok(!content.contains("No files to process"))
-    }
-
     /// 7-zip 解压文件
     /// 提取具有完整路径的文件（保留文件路径）
     /// # 参数
@@ -119,6 +95,7 @@ impl sevenZip {
     pub fn extractFilesFromPath(
         &self,
         zipFile: &Path,
+        password: Option<&str>,
         extractPath: &str,
         outPath: &Path,
     ) -> Result<bool, Box<dyn Error>> {
@@ -132,6 +109,7 @@ impl sevenZip {
             })
             .arg("-y")
             .arg("-aos")
+            .arg(format!("-p{}", password.unwrap_or("")))
             .arg(format!("-o{}", outPath.to_str().unwrap()))
             .output()?;
         let outContent = String::from_utf8_lossy(&output.stdout);

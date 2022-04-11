@@ -1,44 +1,20 @@
-use std::path::{PathBuf, Path};
+use std::ffi::c_void;
 use std::fs;
 use std::os::windows::fs::FileExt;
-use std::time::{UNIX_EPOCH};
-use std::ffi::{c_void};
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+use std::time::UNIX_EPOCH;
+
+use chrono::Local;
+use dokan::{CreateFileInfo, DiskSpaceInfo, DOKAN_IO_SECURITY_CONTEXT, FileInfo, FileSystemHandler, FileTimeInfo, FillDataError, FindData, FindStreamData, OperationError, OperationInfo, VolumeInfo};
+use widestring::U16CStr;
+use winapi::shared::ntstatus::{STATUS_ACCESS_DENIED, STATUS_INVALID_DEVICE_REQUEST, STATUS_NDIS_FILE_NOT_FOUND, STATUS_NOT_IMPLEMENTED, STATUS_OBJECT_NAME_NOT_FOUND};
+use winapi::um::winnt::{FILE_CASE_PRESERVED_NAMES, FILE_PERSISTENT_ACLS, FILE_READ_ONLY_VOLUME, FILE_UNICODE_ON_DISK, FILE_VOLUME_IS_COMPRESSED};
+
+use crate::sevenZip::{ArchiveFileInfo, sevenZip};
+use crate::TEMP_PATH;
+use crate::utils::console::{ConsoleType, writeConsole};
 use crate::utils::util::{convert_str, StringToSystemTime};
-use crate::sevenzip::{sevenZip, ArchiveFileInfo};
-use crate::utils::console::{writeConsole, ConsoleType};
-use dokan::{FileSystemHandler, DOKAN_IO_SECURITY_CONTEXT, CreateFileInfo, OperationInfo, OperationError, FileInfo, FindData, FillDataError, VolumeInfo, DiskSpaceInfo, FileTimeInfo, FindStreamData};
-use widestring::{U16CStr};
-use winapi::shared::ntstatus::{STATUS_ACCESS_DENIED, STATUS_NOT_IMPLEMENTED, STATUS_NDIS_FILE_NOT_FOUND, STATUS_INVALID_DEVICE_REQUEST, STATUS_OBJECT_NAME_NOT_FOUND};
-use winapi::um::winnt::{FILE_CASE_PRESERVED_NAMES, FILE_UNICODE_ON_DISK, FILE_READ_ONLY_VOLUME, FILE_VOLUME_IS_COMPRESSED, FILE_PERSISTENT_ACLS};
-
-#[derive(Debug)]
-pub struct ArchiveFS {
-    /// SevenZIP程序类
-    sevenZip: sevenZip,
-    /// 压缩包路径
-    archivePath: PathBuf,
-    /// 临时释放路径
-    extractPath: PathBuf,
-    /// 压缩包文件信息
-    archiveFileInfoList: Vec<ArchiveFileInfo>,
-}
-
-impl ArchiveFS {
-    pub(crate) fn new(archivePath: &Path, extractPath: &Path, password: Option<&str>) -> ArchiveFS {
-        ArchiveFS {
-            sevenZip: sevenZip::new().unwrap(),
-            archivePath: (*archivePath.to_path_buf()).to_owned(),
-            extractPath: (*extractPath.to_path_buf()).to_owned(),
-            archiveFileInfoList: sevenZip::new().unwrap().listArchiveFiles(archivePath, password).unwrap(),
-        }
-    }
-}
-
-#[derive(Debug)]
-pub struct SevenContext {
-    localFilePath: PathBuf,
-    FileInfo: ArchiveFileInfo,
-}
 
 const FILE_ATTRIBUTES_ARCHIVE: u32 = 32;
 const FILE_ATTRIBUTES_DIRECTORY: u32 = 16;
@@ -55,10 +31,49 @@ const FILE_OVERWRITE: u32 = 4;
 const FILE_OVERWRITE_IF: u32 = 5;
 const FILE_MAXIMUM_DISPOSITION: u32 = 5;
 
+#[derive(Debug)]
+pub struct ArchiveFS {
+    /// SevenZIP程序类
+    sevenZip: sevenZip,
+    /// 压缩包路径
+    archivePath: PathBuf,
+    /// 压缩包密码
+    password: Option<String>,
+    /// 临时释放路径
+    extractPath: PathBuf,
+    /// 缓存大小
+    cacheSize: u16,
+    /// 压缩包文件信息
+    archiveFileInfoList: Vec<ArchiveFileInfo>,
+    /// 缓存信息( (1.文件信息 2.文件路径 3.时间戳 )，排除时间戳最小的文件
+    // cacheInfoList: Mutex<HashMap<(ArchiveFileInfo, PathBuf), i64>>,
+    cacheInfoList: Mutex<Vec<(ArchiveFileInfo, PathBuf, i64)>>,
+}
+
+impl ArchiveFS {
+    pub(crate) fn new(archivePath: &Path, extractPath: &Path, password: Option<&str>, cacheSize: u16, archiveFileInfoList: Vec<ArchiveFileInfo>) -> ArchiveFS {
+        ArchiveFS {
+            sevenZip: sevenZip::new().unwrap(),
+            archivePath: (*archivePath.to_path_buf()).to_owned(),
+            password: password.map(|password| password.to_string()),
+            extractPath: (*extractPath.to_path_buf()).to_owned(),
+            cacheSize,
+            archiveFileInfoList,
+            cacheInfoList: Mutex::new(Vec::new()),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct SevenContext {
+    localFilePath: PathBuf,
+    FileInfo: ArchiveFileInfo,
+}
+
 impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for ArchiveFS {
     type Context = Option<SevenContext>;
 
-    // 创建文件对象时调用
+    /// 创建文件对象时调用
     fn create_file(&'b self, file_name: &U16CStr, _security_context: &DOKAN_IO_SECURITY_CONTEXT, _desired_access: u32, _file_attributes: u32, _share_access: u32, create_disposition: u32, _create_options: u32, _info: &mut OperationInfo<'a, 'b, Self>) -> Result<CreateFileInfo<Self::Context>, OperationError> {
         if create_disposition != FILE_OPEN && create_disposition != FILE_OPEN_IF {
             return Err(OperationError::NtStatus(STATUS_ACCESS_DENIED));
@@ -69,18 +84,19 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for ArchiveFS {
             return Ok(CreateFileInfo { context: None, is_dir: true, new_file_created: false });
         }
 
-        for item in self.clone().archiveFileInfoList.iter() {
+        for item in self.archiveFileInfoList.iter() {
             let file_name = file_name.trim_start_matches('\\');
             let localFilePath = self.extractPath.join(file_name);
             if file_name == item.Path {
-                if !&item.is_dir && !localFilePath.exists() {
-                    // 解压文件
-                    writeConsole(ConsoleType::Info, &*format!("unzip files: {}\\{}", &*self.archivePath.to_str().unwrap(), &*file_name));
-                    if !self.sevenZip.extractFilesFromPath(&*self.archivePath, &*file_name, &self.extractPath).unwrap() && !localFilePath.exists() {
-                        println!("File decompression failed");
-                        return Err(OperationError::NtStatus(STATUS_ACCESS_DENIED));
+                // 更新缓存列表
+                let mut cacheList = self.cacheInfoList.lock().unwrap();
+                for mut cacheInfo in cacheList.iter_mut() {
+                    if cacheInfo.0 == *item {
+                        cacheInfo.2 = Local::now().timestamp_millis();
+                        break;
                     }
                 }
+                // 返回基本信息
                 return Ok(CreateFileInfo {
                     context: Some(SevenContext { localFilePath, FileInfo: item.clone() }),
                     is_dir: item.is_dir,
@@ -88,7 +104,6 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for ArchiveFS {
                 });
             }
         }
-        // println!("创建文件失败: {}", file_name);
         Err(OperationError::NtStatus(STATUS_OBJECT_NAME_NOT_FOUND))
     }
 
@@ -100,11 +115,35 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for ArchiveFS {
     fn read_file(&'b self, file_name: &U16CStr, offset: i64, buffer: &mut [u8], _info: &OperationInfo<'a, 'b, Self>, context: &'a Self::Context) -> Result<u32, OperationError> {
         let file_name = file_name.to_string_lossy();
         if let Some(context) = context {
+            if context.FileInfo.is_dir {
+                return Err(OperationError::NtStatus(STATUS_INVALID_DEVICE_REQUEST));
+            }
+            if !context.localFilePath.exists() {
+                // 自动清理缓存
+                let mut cacheList = self.cacheInfoList.lock().unwrap();
+                // 当前缓存大小（单位: MB）
+                while cacheList.iter().map(|item| item.0.Size).sum::<u64>() / 1024 / 1024 >= self.cacheSize as u64 {
+                    // 排序（排除时间戳最小的文件，即最久未使用文件）
+                    cacheList.sort_by(|a, b| b.2.cmp(&a.2));
+                    if let Some(deleteInfo) = cacheList.pop() {
+                        let _ = fs::remove_file(&deleteInfo.1);
+                    } else {
+                        break;
+                    }
+                }
+                // 解压文件
+                let file_name = file_name.trim_start_matches('\\');
+                writeConsole(ConsoleType::Info, &*format!("UnzipFile: {}\\{}", &*self.archivePath.to_str().unwrap(), &*file_name));
+                if !self.sevenZip.extractFilesFromPath(&*self.archivePath, self.password.as_deref(), &*file_name, &self.extractPath).unwrap() && !context.localFilePath.exists() {
+                    return Err(OperationError::NtStatus(STATUS_INVALID_DEVICE_REQUEST));
+                }
+                // 增加缓存列表
+                cacheList.push((context.FileInfo.clone(), context.localFilePath.clone(), Local::now().timestamp_millis()));
+            }
             let file = fs::File::open(&context.localFilePath).unwrap();
             let result = file.seek_read(buffer, offset as u64).unwrap();
             return Ok(result as u32);
         }
-        println!("读取文件失败: {}", file_name);
         Err(OperationError::NtStatus(STATUS_INVALID_DEVICE_REQUEST))
     }
 
@@ -116,7 +155,7 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for ArchiveFS {
         Err(OperationError::NtStatus(STATUS_NOT_IMPLEMENTED))
     }
 
-    // 获取文件信息
+    /// 获取文件信息
     fn get_file_information(&'b self, file_name: &U16CStr, _info: &OperationInfo<'a, 'b, Self>, context: &'a Self::Context) -> Result<FileInfo, OperationError> {
         let file_name = file_name.to_string_lossy();
         // 判断目录
@@ -138,7 +177,7 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for ArchiveFS {
         Err(OperationError::NtStatus(STATUS_NDIS_FILE_NOT_FOUND))
     }
 
-    // 列出目录中的所有子项
+    /// 列出目录中的所有子项
     fn find_files(&'b self, file_name: &U16CStr, mut fill_find_data: impl FnMut(&FindData) -> Result<(), FillDataError>, _info: &OperationInfo<'a, 'b, Self>, _context: &'a Self::Context) -> Result<(), OperationError> {
         let path = file_name.to_string_lossy();
         // 列出压缩包内文件结构
@@ -200,7 +239,7 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for ArchiveFS {
         Err(OperationError::NtStatus(STATUS_ACCESS_DENIED))
     }
 
-    // 设置虚拟文件系统信息
+    /// 设置虚拟文件系统信息
     fn get_disk_free_space(&'b self, _info: &OperationInfo<'a, 'b, Self>) -> Result<DiskSpaceInfo, OperationError> {
         Ok(DiskSpaceInfo {
             // 存储空间总大小
@@ -212,7 +251,7 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for ArchiveFS {
         })
     }
 
-    // 获取卷信息
+    /// 获取卷信息
     fn get_volume_information(&'b self, _info: &OperationInfo<'a, 'b, Self>) -> Result<VolumeInfo, OperationError> {
         Ok(VolumeInfo {
             name: convert_str("ArchiveMount"),
@@ -228,27 +267,12 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for ArchiveFS {
     }
 
     fn unmounted(&'b self, _info: &OperationInfo<'a, 'b, Self>) -> Result<(), OperationError> {
+        let _ = fs::remove_dir_all(&*TEMP_PATH);
         Ok(())
     }
 
-    // 获取可执行文件安全信息
     fn get_file_security(&'b self, _file_name: &U16CStr, _security_information: u32, _security_descriptor: *mut c_void, _buffer_length: u32, _info: &OperationInfo<'a, 'b, Self>, _context: &'a Self::Context) -> Result<u32, OperationError> {
         Err(OperationError::NtStatus(STATUS_NOT_IMPLEMENTED))
-        // let file_name = file_name.to_string_lossy();
-        // for item in self.archiveFileInfoList.iter() {
-        //     let file_name = file_name.trim_start_matches(format!("\\{}\\", self.parentName).as_str());
-        //     let localFilePath = &self.extractPath.join(file_name);
-        //     if file_name == item.Path {
-        //         let fileName: Vec<u16> = OsStr::new(localFilePath).encode_wide().chain(once(0)).collect();
-        //         let mut needLength = buffer_length.clone();
-        //         unsafe {
-        //             winapi::um::securitybaseapi::GetFileSecurityW(fileName.as_ptr(), security_information, security_descriptor, buffer_length, &mut needLength);
-        //         }
-        //         return Ok(needLength);
-        //     }
-        // }
-        // println!("获取安全信息失败: {}", file_name);
-        // return Err(OperationError::NtStatus(STATUS_NOT_IMPLEMENTED));
     }
 
     fn set_file_security(&'b self, _file_name: &U16CStr, _security_information: u32, _security_descriptor: *mut c_void, _buffer_length: u32, _info: &OperationInfo<'a, 'b, Self>, _context: &'a Self::Context) -> Result<(), OperationError> {
