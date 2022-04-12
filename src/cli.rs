@@ -40,7 +40,8 @@ enum Commands {
         threadCount: Option<u16>,
         /// cache size(default 4096 MB)
         #[clap(short, long)]
-        #[clap(default_value_t = 4096)]
+        // #[clap(default_value_t = 4096)]
+        #[clap(default_value_t = 2)]
         cacheSize: u16,
         /// Do not nest mount points
         #[clap(short, long)]
@@ -85,6 +86,10 @@ pub fn cli() {
             writeConsole(ConsoleType::Err, "Driver uninstall failed");
         }
         Commands::mount { archivePath, mountPath, tempPath, password, threadCount, cacheSize, notNest, open } => {
+            if dokan::driver_version() == 0 {
+                writeConsole(ConsoleType::Err, "driver not installed");
+                return;
+            }
             let extractPath = if let Some(tempPath) = tempPath { tempPath.clone() } else { TEMP_PATH.join("ArchiveTemp") }.join(&archivePath.file_name().unwrap());
             let password = password.as_ref().map(|password| password.as_str());
             if !archivePath.exists() {
@@ -99,11 +104,11 @@ pub fn cli() {
 
             let mut mountPath = mountPath.clone();
             if mountPath.is_dir() && mountPath.metadata().unwrap().len() != 0 {
-                // 挂载路径(如为目录则需 1.目录存在 2.不能在挂载前打开 3.目录为空目录)
+                // 挂载路径为目录则需 1.目录存在 2.不能在挂载前打开 3.目录为空目录
                 writeConsole(ConsoleType::Err, "The mount path is not empty, please specify an empty directory");
                 return;
             } else if fs::create_dir_all(&mountPath).is_ok() && !*notNest {
-                // 将挂载点重定向到 \挂载路径\压缩包名.7z\ 目录
+                // 自动将挂载点重定向到 \挂载路径\压缩包名.7z\ 目录
                 mountPath = mountPath.join(archivePath.file_name().unwrap());
                 let _ = fs::create_dir_all(&mountPath);
             }

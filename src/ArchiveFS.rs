@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::UNIX_EPOCH;
 
-use chrono::Local;
 use dokan::{CreateFileInfo, DiskSpaceInfo, DOKAN_IO_SECURITY_CONTEXT, FileInfo, FileSystemHandler, FileTimeInfo, FillDataError, FindData, FindStreamData, OperationError, OperationInfo, VolumeInfo};
+use lru::LruCache;
 use widestring::U16CStr;
 use winapi::shared::ntstatus::{STATUS_ACCESS_DENIED, STATUS_INVALID_DEVICE_REQUEST, STATUS_NDIS_FILE_NOT_FOUND, STATUS_NOT_IMPLEMENTED, STATUS_OBJECT_NAME_NOT_FOUND};
 use winapi::um::winnt::{FILE_CASE_PRESERVED_NAMES, FILE_PERSISTENT_ACLS, FILE_READ_ONLY_VOLUME, FILE_UNICODE_ON_DISK, FILE_VOLUME_IS_COMPRESSED};
@@ -45,9 +45,8 @@ pub struct ArchiveFS {
     cacheSize: u16,
     /// 压缩包文件信息
     archiveFileInfoList: Vec<ArchiveFileInfo>,
-    /// 缓存信息( (1.文件信息 2.文件路径 3.时间戳 )，排除时间戳最小的文件
-    // cacheInfoList: Mutex<HashMap<(ArchiveFileInfo, PathBuf), i64>>,
-    cacheInfoList: Mutex<Vec<(ArchiveFileInfo, PathBuf, i64)>>,
+    /// 缓存信息
+    cacheInfoList: Mutex<LruCache<ArchiveFileInfo, PathBuf>>,
 }
 
 impl ArchiveFS {
@@ -59,7 +58,7 @@ impl ArchiveFS {
             extractPath: (*extractPath.to_path_buf()).to_owned(),
             cacheSize,
             archiveFileInfoList,
-            cacheInfoList: Mutex::new(Vec::new()),
+            cacheInfoList: Mutex::new(LruCache::unbounded()),
         }
     }
 }
@@ -90,12 +89,7 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for ArchiveFS {
             if file_name == item.Path {
                 // 更新缓存列表
                 let mut cacheList = self.cacheInfoList.lock().unwrap();
-                for mut cacheInfo in cacheList.iter_mut() {
-                    if cacheInfo.0 == *item {
-                        cacheInfo.2 = Local::now().timestamp_millis();
-                        break;
-                    }
-                }
+                let _ = cacheList.get(item);
                 // 返回基本信息
                 return Ok(CreateFileInfo {
                     context: Some(SevenContext { localFilePath, FileInfo: item.clone() }),
@@ -119,14 +113,12 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for ArchiveFS {
                 return Err(OperationError::NtStatus(STATUS_INVALID_DEVICE_REQUEST));
             }
             if !context.localFilePath.exists() {
-                // 自动清理缓存
                 let mut cacheList = self.cacheInfoList.lock().unwrap();
-                // 当前缓存大小（单位: MB）
-                while cacheList.iter().map(|item| item.0.Size).sum::<u64>() / 1024 / 1024 >= self.cacheSize as u64 {
-                    // 排序（排除时间戳最小的文件，即最久未使用文件）
-                    cacheList.sort_by(|a, b| b.2.cmp(&a.2));
-                    if let Some(deleteInfo) = cacheList.pop() {
-                        let _ = fs::remove_file(&deleteInfo.1);
+                // 自动清理缓存(循环当 缓存总大小 + 当前需要解压文件大小 >= 设置缓存大小)
+                while (cacheList.iter().map(|item| item.0.Size).sum::<u64>() + context.FileInfo.Size) / 1024 / 1024 >= self.cacheSize as u64 {
+                    if let Some(lruInfo) = cacheList.pop_lru() {
+                        writeConsole(ConsoleType::Info, &*format!("DelFile: {}", &lruInfo.1.display()));
+                        let _ = fs::remove_file(&lruInfo.1);
                     } else {
                         break;
                     }
@@ -137,8 +129,8 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for ArchiveFS {
                 if !self.sevenZip.extractFilesFromPath(&*self.archivePath, self.password.as_deref(), &*file_name, &self.extractPath).unwrap() && !context.localFilePath.exists() {
                     return Err(OperationError::NtStatus(STATUS_INVALID_DEVICE_REQUEST));
                 }
-                // 增加缓存列表
-                cacheList.push((context.FileInfo.clone(), context.localFilePath.clone(), Local::now().timestamp_millis()));
+                // 增加缓存信息
+                cacheList.put(context.FileInfo.clone(), context.localFilePath.clone());
             }
             let file = fs::File::open(&context.localFilePath).unwrap();
             let result = file.seek_read(buffer, offset as u64).unwrap();
@@ -243,7 +235,7 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for ArchiveFS {
     fn get_disk_free_space(&'b self, _info: &OperationInfo<'a, 'b, Self>) -> Result<DiskSpaceInfo, OperationError> {
         Ok(DiskSpaceInfo {
             // 存储空间总大小
-            byte_count: 2048 * 1024 * 1024,
+            byte_count: (self.cacheSize * 1024 * 1024) as u64,
             // 可用空间量
             free_byte_count: 2048 * 1024 * 1024,
             // 调用线程关联的用户可用的可用空间总量

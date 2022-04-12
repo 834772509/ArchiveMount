@@ -23,5 +23,7 @@ lazy_static = "1.4.0"
 chrono = { version = "0.4", features = ["unstable-locales"] }
 widestring = "0.4.3"
 winapi = { version = "0.3.9", features = ["ntstatus"] }
+lru = "0.7.5"
+ctrlc = "3.2.0"
 # 目前Dokan未适配V2.0支持
 dokan = "0.2.0+dokan150"
