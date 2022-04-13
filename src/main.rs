@@ -7,8 +7,10 @@
 #[macro_use]
 extern crate lazy_static;
 
-use std::{env, fs};
+use std::{env, fs, process};
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use rust_embed::RustEmbed;
 
@@ -47,8 +49,16 @@ lazy_static! {
 }
 
 fn main() {
+    // 程序退出调用
+    let running = Arc::new(AtomicUsize::new(0));
+    ctrlc::set_handler(move || {
+        let prev = running.clone().fetch_add(1, Ordering::SeqCst);
+        if prev == 0 {
+            let _ = fs::remove_dir_all(&*TEMP_PATH);
+            process::exit(0x0100);
+        }
+    }).expect("Error setting Ctrl-C handler");
     // 创建临时目录
-    let _ = fs::remove_dir_all(&*TEMP_PATH);
     let _ = fs::create_dir(&*TEMP_PATH);
     // 配置程序运行环境
     let dokanDll = &*TEMP_PATH.join("dokan1.dll");

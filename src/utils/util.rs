@@ -24,9 +24,11 @@ pub fn writeEmbedFile(filePath: &str, outFilePath: &Path) -> Result<(), Box<dyn 
 
 /// 安装Dokan驱动
 pub fn installDokanDriver() -> Result<bool, Box<dyn Error>> {
-    // 1. dokan1.sys释放至C:\windows\system32\drivers\dokan1.sys
-    let _ = writeEmbedFile("dokan1.sys", &Path::new(&env::var("windir")?).join(r"System32\drivers\dokan1.sys"));
-
+    // 1. dokan1.sys 释放至C:\windows\system32\drivers\dokan1.sys
+    let dokanSysPath = Path::new(&env::var("windir")?).join(r"System32\drivers\dokan1.sys");
+    if !dokanSysPath.exists() {
+        writeEmbedFile("dokan1.sys", &dokanSysPath)?;
+    }
     // 2. 释放 dokanctl.exe、dokan1.dll，执行 dokanctl.exe /i d
     let dokanctl = &TEMP_PATH.join("dokanctl.exe");
     if !dokanctl.exists() {
@@ -52,7 +54,7 @@ pub fn uninstallDokanDriver() -> Result<bool, Box<dyn Error>> {
         .arg("/r")
         .arg("d")
         .output()?;
-    let _ = fs::remove_file(&Path::new(&env::var("windir")?).join(r"System32\drivers\dokan1.sys"));
+    fs::remove_file(&Path::new(&env::var("windir")?).join(r"System32\drivers\dokan1.sys"))?;
     let content = String::from_utf8_lossy(&output.stdout);
     Ok(content.contains("removed"))
 }
@@ -72,10 +74,11 @@ pub fn convert_str(s: impl AsRef<str>) -> U16CString {
 }
 
 /// 字符串转时间
-pub fn StringToSystemTime(time: &str) -> SystemTime {
-    let custom = NaiveDateTime::parse_from_str(time, "%Y-%m-%d %H:%M:%S").unwrap();
+pub fn StringToSystemTime(time: &str) -> Result<SystemTime, Box<dyn Error>> {
+    // println!("{}", time);
+    let custom = NaiveDateTime::parse_from_str(time, "%Y-%m-%d %H:%M:%S")?;
     let date_time: DateTime<Local> = Local.from_local_datetime(&custom).unwrap();
-    SystemTime::from(date_time)
+    Ok(SystemTime::from(date_time))
 }
 
 /// 获取当前时间戳

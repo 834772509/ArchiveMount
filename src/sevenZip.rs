@@ -69,10 +69,9 @@ impl sevenZip {
 
             let created = item.get_string_center("Created = ", "\r\n").unwrap_or_else(|_| "".to_string());
             let created = if created.is_empty() { None } else { Some(created) };
-
             archiveFileInfoList.push(ArchiveFileInfo {
                 Path: item.get_string_center("Path = ", "\r\n").unwrap_or_else(|_| "".to_string()),
-                Size: item.get_string_center("Size = ", "\r\n").unwrap_or_else(|_| "0".to_string()).parse().unwrap(),
+                Size: item.get_string_center("Size = ", "\r\n").unwrap_or_else(|_| "0".to_string()).parse().unwrap_or(0),
                 PackedSize: packedSize,
                 Modified: item.get_string_center("Modified = ", "\r\n").unwrap_or_else(|_| "".to_string()),
                 Created: created,

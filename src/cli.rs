@@ -40,13 +40,12 @@ enum Commands {
         threadCount: Option<u16>,
         /// cache size(default 4096 MB)
         #[clap(short, long)]
-        // #[clap(default_value_t = 4096)]
-        #[clap(default_value_t = 2)]
+        #[clap(default_value_t = 4096)]
         cacheSize: u16,
         /// Do not nest mount points
         #[clap(short, long)]
         notNest: bool,
-        /// Open path after mount
+        /// After mount open explorer
         #[clap(short, long)]
         open: bool,
     },
@@ -86,6 +85,7 @@ pub fn cli() {
             writeConsole(ConsoleType::Err, "Driver uninstall failed");
         }
         Commands::mount { archivePath, mountPath, tempPath, password, threadCount, cacheSize, notNest, open } => {
+            writeConsole(ConsoleType::Info, &*format!("Mounting archive: {}", archivePath.to_str().unwrap()));
             if dokan::driver_version() == 0 {
                 writeConsole(ConsoleType::Err, "driver not installed");
                 return;
@@ -93,15 +93,15 @@ pub fn cli() {
             let extractPath = if let Some(tempPath) = tempPath { tempPath.clone() } else { TEMP_PATH.join("ArchiveTemp") }.join(&archivePath.file_name().unwrap());
             let password = password.as_ref().map(|password| password.as_str());
             if !archivePath.exists() {
-                writeConsole(ConsoleType::Err, "package does not exist");
+                writeConsole(ConsoleType::Err, "The archive does not exist");
                 return;
             }
+            writeConsole(ConsoleType::Info, "Reading archive list......");
             let archiveFileInfoList = sevenZip::new().unwrap().listArchiveFiles(archivePath, password).unwrap();
             if archiveFileInfoList.is_empty() {
-                writeConsole(ConsoleType::Err, "The compressed package information is not detected, please confirm it is the correct compressed package or encrypted compressed package");
+                writeConsole(ConsoleType::Err, "The Archive information is not detected, please confirm it is the correct archive or encrypted archive");
                 return;
             }
-
             let mut mountPath = mountPath.clone();
             if mountPath.is_dir() && mountPath.metadata().unwrap().len() != 0 {
                 // 挂载路径为目录则需 1.目录存在 2.不能在挂载前打开 3.目录为空目录
@@ -112,9 +112,8 @@ pub fn cli() {
                 mountPath = mountPath.join(archivePath.file_name().unwrap());
                 let _ = fs::create_dir_all(&mountPath);
             }
-            writeConsole(ConsoleType::Info, &*format!("Mount compressed package: {}", archivePath.to_str().unwrap()));
             // 挂载
-            let archiveFs = ArchiveFS::ArchiveFS::new(archivePath, &extractPath, password, *cacheSize, archiveFileInfoList);
+            let archiveFs = ArchiveFS::ArchiveFS::new(archivePath, &extractPath, password, *cacheSize, archiveFileInfoList, *open);
             let _result = dokan::Drive::new()
                 // 线程数(0为自动)
                 .thread_count(threadCount.unwrap_or(0))
@@ -130,7 +129,6 @@ pub fn cli() {
                 .sector_size(1024)
                 // 挂载并阻塞当前线程，直到卷被卸载
                 .mount(&archiveFs);
-            // if *open { let _ = Command::new(mountPath).output().unwrap(); }
         }
         Commands::unmount { mountPath } => {
             if dokan::unmount(&convert_str(mountPath.to_str().unwrap())) {

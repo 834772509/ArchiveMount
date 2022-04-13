@@ -2,8 +2,9 @@ use std::ffi::c_void;
 use std::fs;
 use std::os::windows::fs::FileExt;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::Mutex;
-use std::time::UNIX_EPOCH;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use dokan::{CreateFileInfo, DiskSpaceInfo, DOKAN_IO_SECURITY_CONTEXT, FileInfo, FileSystemHandler, FileTimeInfo, FillDataError, FindData, FindStreamData, OperationError, OperationInfo, VolumeInfo};
 use lru::LruCache;
@@ -41,16 +42,19 @@ pub struct ArchiveFS {
     password: Option<String>,
     /// 临时释放路径
     extractPath: PathBuf,
-    /// 缓存大小
+    /// 缓存大小(单位: MB)
     cacheSize: u16,
     /// 压缩包文件信息
     archiveFileInfoList: Vec<ArchiveFileInfo>,
     /// 缓存信息
     cacheInfoList: Mutex<LruCache<ArchiveFileInfo, PathBuf>>,
+    /// 挂载后是否打开
+    open: bool,
 }
 
 impl ArchiveFS {
-    pub(crate) fn new(archivePath: &Path, extractPath: &Path, password: Option<&str>, cacheSize: u16, archiveFileInfoList: Vec<ArchiveFileInfo>) -> ArchiveFS {
+    pub(crate) fn new(archivePath: &Path, extractPath: &Path, password: Option<&str>, cacheSize: u16, archiveFileInfoList: Vec<ArchiveFileInfo>, open: bool) -> ArchiveFS {
+        let _ = fs::create_dir_all(extractPath);
         ArchiveFS {
             sevenZip: sevenZip::new().unwrap(),
             archivePath: (*archivePath.to_path_buf()).to_owned(),
@@ -59,6 +63,7 @@ impl ArchiveFS {
             cacheSize,
             archiveFileInfoList,
             cacheInfoList: Mutex::new(LruCache::unbounded()),
+            open,
         }
     }
 }
@@ -117,7 +122,7 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for ArchiveFS {
                 // 自动清理缓存(循环当 缓存总大小 + 当前需要解压文件大小 >= 设置缓存大小)
                 while (cacheList.iter().map(|item| item.0.Size).sum::<u64>() + context.FileInfo.Size) / 1024 / 1024 >= self.cacheSize as u64 {
                     if let Some(lruInfo) = cacheList.pop_lru() {
-                        writeConsole(ConsoleType::Info, &*format!("DelFile: {}", &lruInfo.1.display()));
+                        writeConsole(ConsoleType::Info, &*format!("Delete Cache: {}", &lruInfo.1.display()));
                         let _ = fs::remove_file(&lruInfo.1);
                     } else {
                         break;
@@ -125,7 +130,7 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for ArchiveFS {
                 }
                 // 解压文件
                 let file_name = file_name.trim_start_matches('\\');
-                writeConsole(ConsoleType::Info, &*format!("UnzipFile: {}\\{}", &*self.archivePath.to_str().unwrap(), &*file_name));
+                writeConsole(ConsoleType::Info, &*format!("Extracting file: {}\\{}", &*self.archivePath.to_str().unwrap(), &*file_name));
                 if !self.sevenZip.extractFilesFromPath(&*self.archivePath, self.password.as_deref(), &*file_name, &self.extractPath).unwrap() && !context.localFilePath.exists() {
                     return Err(OperationError::NtStatus(STATUS_INVALID_DEVICE_REQUEST));
                 }
@@ -156,11 +161,12 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for ArchiveFS {
         }
 
         if let Some(context) = context {
+            let modifiedTime = StringToSystemTime(&*context.FileInfo.Modified).unwrap_or_else(|_| SystemTime::now());
             return Ok(FileInfo {
                 attributes: if context.FileInfo.is_dir { FILE_ATTRIBUTES_DIRECTORY } else { FILE_ATTRIBUTES_NORMAL },
-                creation_time: StringToSystemTime(&*context.FileInfo.Modified),
-                last_access_time: StringToSystemTime(&*context.FileInfo.Modified),
-                last_write_time: StringToSystemTime(&*context.FileInfo.Modified),
+                creation_time: modifiedTime,
+                last_access_time: modifiedTime,
+                last_write_time: modifiedTime,
                 file_size: context.FileInfo.Size,
                 number_of_links: 0,
                 file_index: 0,
@@ -178,11 +184,12 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for ArchiveFS {
             // 筛选出匹配的文件(前面匹配、不等于自身、父路径匹配)
             if filePath.find(&path) == Some(0) && filePath != path && Path::new(&filePath).parent().unwrap().to_str().unwrap() == path {
                 let fileName = Path::new(&item.Path).file_name().unwrap().to_str().unwrap();
+                let modifiedTime = StringToSystemTime(&*item.Modified).unwrap_or_else(|_| SystemTime::now());
                 fill_find_data(&FindData {
                     attributes: if item.is_dir { FILE_ATTRIBUTES_DIRECTORY } else { FILE_ATTRIBUTES_NORMAL },
-                    creation_time: StringToSystemTime(&*item.Modified),
-                    last_access_time: StringToSystemTime(&*item.Modified),
-                    last_write_time: StringToSystemTime(&*item.Modified),
+                    creation_time: modifiedTime,
+                    last_access_time: modifiedTime,
+                    last_write_time: modifiedTime,
                     file_size: item.Size,
                     file_name: convert_str(fileName),
                 })?;
@@ -233,13 +240,15 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for ArchiveFS {
 
     /// 设置虚拟文件系统信息
     fn get_disk_free_space(&'b self, _info: &OperationInfo<'a, 'b, Self>) -> Result<DiskSpaceInfo, OperationError> {
+        let cacheList = self.cacheInfoList.lock().unwrap();
+        let currentAvailableSize = self.cacheSize as u64 * 1024 * 1024 - (cacheList.iter().map(|item| item.0.Size).sum::<u64>());
         Ok(DiskSpaceInfo {
             // 存储空间总大小
-            byte_count: (self.cacheSize * 1024 * 1024) as u64,
+            byte_count: self.cacheSize as u64 * 1024 * 1024,
             // 可用空间量
-            free_byte_count: 2048 * 1024 * 1024,
+            free_byte_count: currentAvailableSize,
             // 调用线程关联的用户可用的可用空间总量
-            available_byte_count: 2048 * 1024 * 1024,
+            available_byte_count: currentAvailableSize,
         })
     }
 
@@ -254,7 +263,12 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for ArchiveFS {
         })
     }
 
-    fn mounted(&'b self, _info: &OperationInfo<'a, 'b, Self>) -> Result<(), OperationError> {
+    fn mounted(&'b self, info: &OperationInfo<'a, 'b, Self>) -> Result<(), OperationError> {
+        writeConsole(ConsoleType::Success, "Mounted archive successfully");
+        if self.open {
+            let mountPath = info.mount_point().unwrap().to_string_lossy();
+            let _ = Command::new("explorer").arg(mountPath).output().unwrap();
+        }
         Ok(())
     }
 

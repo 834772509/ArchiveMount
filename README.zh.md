@@ -64,6 +64,7 @@ AR、ARJ、CAB、CHM、CPIO、CramFS、DMG、EXT、FAT、GPT、HFS、IHEX、ISO�
 `ArchiveMount.exe mount 压缩包路径 挂载路径 [缓存路径]`
 
 - 基本使用
+    - `ArchiveMount.exe mount D:\Archive.7z Z:`
     - `ArchiveMount.exe mount D:\Archive.7z D:\Mount`
     - `ArchiveMount.exe mount D:\Archive.7z D:\Mount D:\Cache`
 - 指定密码: `ArchiveMount.exe mount 压缩包路径 挂载路径 -p密码`
