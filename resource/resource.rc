@@ -2,17 +2,17 @@
 #define VER_COMPANYNAME_STR           "ArchiveMount\0"
 #define VER_FILEDESCRIPTION_STR       "Mount Archive to virtual file system\0"
 #define VER_INTERNALNAME_STR          "ArchiveMount\0"
-#define VER_LEGALCOPYRIGHT_STR        "Copyright ? 2022\0"
+#define VER_LEGALCOPYRIGHT_STR        "Copyright (C) 2022\0"
 #define VER_ORIGINALFILENAME_STR      "ArchiveMount.exe\0"
 #define VER_PRODUCTNAME_STR           "ArchiveMount\0"
 
 /* 文件版本 */
-#define VER_FILEVERSION               0,2,0,0
-#define VER_FILEVERSION_STR           "0.2.0.0\0"
+#define VER_FILEVERSION               0,3,0,0
+#define VER_FILEVERSION_STR           "0.3.0.0\0"
 
 /* 产品版本 */
-#define VER_PRODUCTVERSION            0,2,0,0
-#define VER_PRODUCTVERSION_STR        "0.2.0.0\0"
+#define VER_PRODUCTVERSION            0,3,0,0
+#define VER_PRODUCTVERSION_STR        "0.3.0.0\0"
 
 1 VERSIONINFO
 FILEVERSION     VER_FILEVERSION

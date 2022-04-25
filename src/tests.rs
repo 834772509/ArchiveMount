@@ -15,30 +15,39 @@ use chrono::Local;
 use dokan::{Drive, driver_version, MountFlags, unmount};
 
 use crate::ArchiveFS;
-use crate::sevenZip::sevenZip;
+use crate::sevenZip::{ArchiveFileInfo, sevenZip};
 use crate::TEMP_PATH;
-use crate::utils::util::convert_str;
+use crate::utils::util::{convert_str, registerFileMenu};
 use crate::utils::util::StringToSystemTime;
+
+// [
+//   目录1:[
+//      文件1信息
+//      内目录1:[]
+//    ],
+// ]
+struct FileNode {
+    info: ArchiveFileInfo,
+    list: Option<Vec<FileNode>>,
+}
 
 #[test]
 fn test_listArchiveFiles() {
     let zip = sevenZip::new().unwrap();
-    // println!("{:#?}", zip.listArchiveFiles(Path::new(r"./test/test.7z"), None));
-    println!("{:#?}", zip.listArchiveFiles(Path::new(r"D:\Project\FirPE\Win10PE\11PEX64.wim"), None));
+    let list = zip.listArchiveFiles(Path::new(r"./test/test.7z"), None).unwrap();
+    // println!("{:#?}", list);
+    let fileNode: Vec<FileNode> = Vec::new();
+    for item in list.iter() {
+        println!("{}", item.Path);
+        // fileNode.push(FileNode { info: item.clone(), list: None });
+    }
 }
 
 #[test]
 fn test_ArchiveFileTime() {
     let zip = sevenZip::new().unwrap();
-    // let list = zip.listArchiveFiles(Path::new(r"./test/test.7z"), None).unwrap();
-    let list = zip.listArchiveFiles(Path::new(r"D:\Project\FirPE\Win10PE\11PEX64.wim"), None).unwrap();
-    for item in list.iter() {
-        if item.Modified.is_empty() {
-            println!("{}", item.Path);
-        }
-    }
-    // println!("{:#?}", list);
-    // println!("{:?}", StringToSystemTime(&list[5].Modified));
+    let list = zip.listArchiveFiles(Path::new(r"./test/test.7z"), None).unwrap();
+    println!("{:?}", StringToSystemTime(&list[0].Modified));
 }
 
 #[test]
@@ -50,22 +59,6 @@ fn test_timestamp1() {
     let ms = since_the_epoch.as_secs() as i64 * 1000i64 + (since_the_epoch.subsec_nanos() as f64 / 1_000_000.0) as i64;
     // println!("{}", ms);
     println!("{}", Local::now().timestamp_millis());
-}
-
-#[derive(Debug)]
-struct testStruct {
-    // testType: HashMap<i32, i32>,
-    testType: Vec<(String, i32)>,
-}
-
-#[test]
-fn test_struct_HashMap() {
-    let mut testStruct = testStruct { testType: vec![("bbbb".to_string(), 2), ("aaaa".to_string(), 1)] };
-    testStruct.testType.sort_by(|a, b| a.1.cmp(&b.1));
-    println!("{:?}", testStruct.testType);
-    // testStruct.testType.insert(0, 1);
-    // testStruct.testType.insert(1, 1);
-    // println!("{:#?}", testStruct);
 }
 
 #[test]
@@ -119,4 +112,9 @@ fn test_Mount_ArchiveFile() {
     // });
     // // println!("挂载完毕");
     // myThread.join();
+}
+
+#[test]
+fn test_menu() {
+    crate::utils::util::registerFileMenu(Path::new(r"C:\Users\Administrator\Desktop\ArchiveMount-V0.2.0\ArchiveMount.exe"));
 }

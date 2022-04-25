@@ -1,7 +1,9 @@
-use std::error::Error;
 use std::fs;
+use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+
+use anyhow::Result;
 
 use crate::TEMP_PATH;
 use crate::utils::util::{String_utils, writeEmbedFile};
@@ -18,16 +20,16 @@ pub struct ArchiveFileInfo {
     pub(crate) Modified: String,
     /// 创建时间(注意：7z格式无此属性)
     pub(crate) Created: Option<String>,
-    /// 文件属性（属性为D表示目录）
-    pub(crate) Attributes: String,
-    /// 是否加密
-    pub(crate) Encrypted: bool,
     /// 是否为目录
     pub(crate) is_dir: bool,
-    /// CRC校验码
-    pub(crate) CRC: String,
-    /// 压缩算法
-    pub(crate) Method: String,
+    // 文件属性
+    // pub(crate) Attributes: String,
+    // 是否加密
+    // pub(crate) Encrypted: bool,
+    // CRC校验码
+    // pub(crate) CRC: String,
+    // 压缩算法
+    // pub(crate) Method: String,
 }
 
 #[derive(Debug)]
@@ -36,7 +38,7 @@ pub struct sevenZip {
 }
 
 impl sevenZip {
-    pub fn new() -> Result<sevenZip, Box<dyn Error>> {
+    pub fn new() -> Result<sevenZip> {
         if !TEMP_PATH.exists() {
             fs::create_dir(&*TEMP_PATH)?;
         }
@@ -47,11 +49,13 @@ impl sevenZip {
     }
 
     /// 列出压缩包文件列表
-    pub fn listArchiveFiles(&self, zipFile: &Path, password: Option<&str>) -> Result<Vec<ArchiveFileInfo>, Box<dyn Error>> {
-        let output = Command::new(&self.zipProgram)
+    pub fn listArchiveFiles(&self, zipFile: &Path, password: Option<&str>) -> Result<Vec<ArchiveFileInfo>> {
+        let output = Command::new(&self.zipProgram).creation_flags(0x08000000)
             .arg("l")
             .arg(format!("-p{}", password.unwrap_or("")))
+            // 跳过标题行
             .arg("-ba")
+            // 格式化技术信息
             .arg("-slt")
             .arg("-sccUTF-8")
             .arg(zipFile.to_str().unwrap())
@@ -75,11 +79,11 @@ impl sevenZip {
                 PackedSize: packedSize,
                 Modified: item.get_string_center("Modified = ", "\r\n").unwrap_or_else(|_| "".to_string()),
                 Created: created,
-                Attributes: item.get_string_center("Attributes = ", "\r\n").unwrap_or_else(|_| "".to_string()),
-                Encrypted: false,
                 is_dir: item.get_string_center("Attributes = ", "\r\n").unwrap_or_else(|_| "".to_string()).contains('D'),
-                CRC: item.get_string_center("CRC = ", "\r\n").unwrap_or_else(|_| "".to_string()),
-                Method: item.get_string_center("Method = ", "\r\n").unwrap_or_else(|_| "".to_string()),
+                // Attributes: item.get_string_center("Attributes = ", "\r\n").unwrap_or_else(|_| "".to_string()),
+                // Encrypted: false,
+                // CRC: item.get_string_center("CRC = ", "\r\n").unwrap_or_else(|_| "".to_string()),
+                // Method: item.get_string_center("Method = ", "\r\n").unwrap_or_else(|_| "".to_string()),
             });
         }
         Ok(archiveFileInfoList)
@@ -97,8 +101,8 @@ impl sevenZip {
         password: Option<&str>,
         extractPath: &str,
         outPath: &Path,
-    ) -> Result<bool, Box<dyn Error>> {
-        let output = Command::new(&self.zipProgram)
+    ) -> Result<bool> {
+        let output = Command::new(&self.zipProgram).creation_flags(0x08000000)
             .arg("x")
             .arg(zipFile.to_str().unwrap())
             .arg(if !extractPath.is_empty() {
@@ -126,8 +130,8 @@ impl sevenZip {
         zipFile: &Path,
         extractPath: &str,
         outPath: &Path,
-    ) -> Result<bool, Box<dyn Error>> {
-        let output = Command::new(&self.zipProgram)
+    ) -> Result<bool> {
+        let output = Command::new(&self.zipProgram).creation_flags(0x08000000)
             .arg("x")
             .arg("-r")
             .arg(zipFile.to_str().unwrap())

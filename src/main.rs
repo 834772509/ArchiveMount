@@ -4,13 +4,18 @@
 // 禁用未使用代码警告
 #![allow(dead_code)]
 
+// 不显示窗口
+#![windows_subsystem = "windows"]
+
 #[macro_use]
 extern crate lazy_static;
 
 use std::{env, fs, process};
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::thread::sleep;
+use std::time::Duration;
 
 use rust_embed::RustEmbed;
 
@@ -45,7 +50,8 @@ pub struct Asset;
 
 // 设置静态变量
 lazy_static! {
-    pub static ref TEMP_PATH: PathBuf = PathBuf::from(env::var("temp").unwrap()).join("ArchiveMount");
+    pub static ref TEMP_PATH: PathBuf = env::temp_dir().join("ArchiveMount");
+    pub static ref QUIET: Mutex<bool> = Mutex::new(false);
 }
 
 fn main() {
@@ -58,14 +64,20 @@ fn main() {
             process::exit(0x0100);
         }
     }).expect("Error setting Ctrl-C handler");
+
     // 创建临时目录
     let _ = fs::create_dir(&*TEMP_PATH);
+
     // 配置程序运行环境
     let dokanDll = &*TEMP_PATH.join("dokan1.dll");
     if !dokanDll.exists() { let _ = writeEmbedFile("dokan1.dll", dokanDll); }
     setDllDirectory(&*TEMP_PATH);
+
     // 处理CLI
     cli::cli();
+    // 非隐藏模式下延时控制台后结束
+    if !*QUIET.lock().unwrap() { sleep(Duration::from_secs(5)) }
+
     // 删除临时目录
     let _ = fs::remove_dir_all(&*TEMP_PATH);
 }

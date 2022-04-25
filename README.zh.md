@@ -21,6 +21,12 @@
 
 - 集成度高，无感解压。
 
+### 哪种格式更适合挂载？
+
+我们推荐使用[zstd](http://www.zstd.net)算法进行压缩。Zstd 可以以压缩速度为代价提供更强的压缩比，速度与压缩的权衡可以通过小增量进行配置。使得解压缩速度在所有设置下都保持不变。
+
+- [7-zip ZS] (https://github.com/mcmilk/7-Zip-zstd)
+
 ## 软件架构
 
 使用`Rust`编写，调用`Dokan`库实现文件过滤，`VC-LTL`编译。
@@ -35,9 +41,9 @@
 
 ### `ArchiveMount`支持那些格式？
 
-`ArchiveMount`内置7-zip，支持7-zip所支持的所有格式。
+`ArchiveMount`内置 7-zip ZS，支持 7-zip ZS 所支持的所有格式。
 
-- 7z、XZ、BZIP2、GZIP、TAR、ZIP、WIM
+- 7z、XZ、BZIP2、GZIP、TAR、ZIP、WIM、ESD
 -
 
 AR、ARJ、CAB、CHM、CPIO、CramFS、DMG、EXT、FAT、GPT、HFS、IHEX、ISO、LZH、LZMA、MBR、MSI、NSIS、NTFS、QCOW2、RAR、RPM、SquashFS、UDF、UEFI、VDI、VHD、VMDK、WIM、XAR、Z
@@ -53,30 +59,56 @@ AR、ARJ、CAB、CHM、CPIO、CramFS、DMG、EXT、FAT、GPT、HFS、IHEX、ISO�
 本程序为命令行程序，故需要在其后面接参数运行，如直接双击程序将会出现“闪退”现象，您可通过`cmd`、`PowerShell`等终端来运行。  
 注意：请使用**管理员身份**运行终端。
 
+### 隐藏运行
+
+`ArchiveMount.exe -q 命令 参数`
+
+- `ArchiveMount.exe -q install`
+- `ArchiveMount.exe -q mount 压缩包路径 挂载路径 [缓存路径]`
+
 ### 安装驱动
 
-使用`ArchiveMount`前需要安装驱动:
+> 温馨提示: 如之前安装过Dokan驱动需要先卸载。
 
-- `ArchiveMount.exe install`
+**使用`ArchiveMount`前需要安装驱动，否则会提示驱动没有安装**
+
+- 基本安装: `ArchiveMount.exe install`
+- 基本安装并注册到右键菜单: `ArchiveMount.exe install -r`
 
 ### 挂载压缩包
 
 `ArchiveMount.exe mount 压缩包路径 挂载路径 [缓存路径]`
 
+> 温馨提示: 如路径中含有空格请使用引号进行包裹。
+
 - 基本使用
     - `ArchiveMount.exe mount D:\Archive.7z Z:`
     - `ArchiveMount.exe mount D:\Archive.7z D:\Mount`
     - `ArchiveMount.exe mount D:\Archive.7z D:\Mount D:\Cache`
+- 挂载后打开: `ArchiveMount.exe mount 压缩包路径 挂载路径 -o`
+    - `ArchiveMount.exe mount D:\Archive.7z Z: -o`
+- 不嵌套目录挂载: `ArchiveMount.exe mount 压缩包路径 挂载路径 -n`
+    - `ArchiveMount.exe mount D:\Archive.7z Z: -n`
 - 指定密码: `ArchiveMount.exe mount 压缩包路径 挂载路径 -p密码`
-    - `ArchiveMount.exe mount 压缩包路径 挂载路径 -p123456`
-- 指定线程数: `ArchiveMount.exe mount 压缩包路径 挂载路径 -t线程数`
-    - `ArchiveMount.exe mount 压缩包路径 挂载路径 -t8`
-- 指定缓存大小: `ArchiveMount.exe mount 压缩包路径 挂载路径 -c缓存大小`
-    - `ArchiveMount.exe mount 压缩包路径 挂载路径 -c1024`
-- 指定缓存目录: `ArchiveMount.exe mount 压缩包路径 挂载路径 缓存目录`
-    - `ArchiveMount.exe mount 压缩包路径 挂载路径 D:\Cache`
+    - `ArchiveMount.exe mount D:\Archive.7z Z: -p123456`
+- 指定线程数(默认自动): `ArchiveMount.exe mount 压缩包路径 挂载路径 -t 线程数`
+    - `ArchiveMount.exe mount D:\Archive.7z Z: -t 8`
+- 指定缓存大小(默认4096MB): `ArchiveMount.exe mount 压缩包路径 挂载路径 -c 缓存大小`
+    - `ArchiveMount.exe mount D:\Archive.7z Z: -c 1024`
+- 指定卷标(默认ArchiveMount):`ArchiveMount.exe mount 压缩包路径 挂载路径 -v 卷标名`
+    - `ArchiveMount.exe mount D:\Archive.7z Z: -v ArchiveFS`
+- 开启调试模式: `ArchiveMount.exe mount D:\Archive.7z Z: -d`
+
+### 卸载压缩包
+
+`ArchiveMount.exe unmount 挂载路径`
+
+- `ArchiveMount.exe unmount Z:`
+- `ArchiveMount.exe unmount D:\Mount`
 
 ### 卸载驱动
+
+> 温馨提示: 卸载驱动后需要重启才能完全卸载。
 
 - `ArchiveMount uninstall`
 

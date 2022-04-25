@@ -5,25 +5,27 @@ use std::fs::File;
 use std::io::Write;
 use std::iter::once;
 use std::os::windows::ffi::OsStrExt;
+use std::os::windows::process::CommandExt;
 use std::path::Path;
 use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::SystemTime;
 
+use anyhow::Result;
 use chrono::{DateTime, Local, NaiveDateTime, TimeZone};
-use widestring::U16CString;
 
 use crate::Asset;
 use crate::TEMP_PATH;
 
 /// 写到文件
-pub fn writeEmbedFile(filePath: &str, outFilePath: &Path) -> Result<(), Box<dyn Error>> {
+pub fn writeEmbedFile(filePath: &str, outFilePath: &Path) -> Result<()> {
     let file = Asset::get(filePath).unwrap();
     File::create(outFilePath).unwrap().write_all(&file.data)?;
     Ok(())
 }
 
 /// 安装Dokan驱动
-pub fn installDokanDriver() -> Result<bool, Box<dyn Error>> {
+/// https://docs.microsoft.com/en-us/windows/win32/api/setupapi/nf-setupapi-setupcopyoeminfw
+pub fn installDokanDriver() -> Result<bool> {
     // 1. dokan1.sys 释放至C:\windows\system32\drivers\dokan1.sys
     let dokanSysPath = Path::new(&env::var("windir")?).join(r"System32\drivers\dokan1.sys");
     if !dokanSysPath.exists() {
@@ -35,7 +37,7 @@ pub fn installDokanDriver() -> Result<bool, Box<dyn Error>> {
         // writeEmbedFile("dokan1.dll", &TEMP_PATH.join("dokan1.dll"))?;
         writeEmbedFile("dokanctl.exe", dokanctl)?;
     }
-    let output = Command::new(dokanctl)
+    let output = Command::new(dokanctl).creation_flags(0x08000000)
         .arg("/i")
         .arg("d")
         .output()?;
@@ -44,13 +46,13 @@ pub fn installDokanDriver() -> Result<bool, Box<dyn Error>> {
 }
 
 /// 卸载Dokan驱动
-pub fn uninstallDokanDriver() -> Result<bool, Box<dyn Error>> {
+pub fn uninstallDokanDriver() -> Result<bool> {
     let dokanctl = &TEMP_PATH.join("dokanctl.exe");
     if !dokanctl.exists() {
         // writeEmbedFile("dokan1.dll", &TEMP_PATH.join("dokan1.dll"))?;
         writeEmbedFile("dokanctl.exe", dokanctl)?;
     }
-    let output = Command::new(&dokanctl)
+    let output = Command::new(&dokanctl).creation_flags(0x08000000)
         .arg("/r")
         .arg("d")
         .output()?;
@@ -59,33 +61,54 @@ pub fn uninstallDokanDriver() -> Result<bool, Box<dyn Error>> {
     Ok(content.contains("removed"))
 }
 
-pub fn setDllDirectory(path: &Path) -> bool {
-    let aaa = OsStr::new(path).encode_wide().chain(once(0)).collect::<Vec<u16>>();
+/// 注册右键菜单
+pub fn registerFileMenu(programPath: &Path) -> Result<()> {
+    // Reg.exe add "HKLM\SOFTWARE\Classes\*\shell\ArchiveMount" /ve /t REG_SZ /d "ArchiveMount" /f
+    // Reg.exe add "HKLM\SOFTWARE\Classes\*\shell\ArchiveMount\command" /ve /t REG_SZ /d "\"ArchiveMount.exe\" mount \"%%1\" \"C:\ArchiveMount\" -o" /f
+    let mountPath = env::var("SystemDrive").unwrap();
+    let _ = Command::new("Reg.exe").creation_flags(0x08000000)
+        .arg("add").arg(r"HKLM\SOFTWARE\Classes\*\shell\ArchiveMount")
+        .arg("/ve")
+        .arg("/t").arg("REG_SZ")
+        .arg("/d").arg("ArchiveMount")
+        .arg("/f")
+        .output()?;
+    let _ = Command::new("Reg.exe").creation_flags(0x08000000)
+        .arg("add").arg(r"HKLM\SOFTWARE\Classes\*\shell\ArchiveMount\command")
+        .arg("/ve")
+        .arg("/t").arg("REG_SZ")
+        .arg("/d").arg(format!("\"{}\" --quiet mount \"%1\" \"{}\\ArchiveMount\" -o", programPath.to_str().unwrap(), mountPath))
+        .arg("/f")
+        .output()?;
+    Ok(())
+}
 
+/// 取消注册右键菜单
+pub fn unregisterFileMenu() -> Result<()> {
+    //reg delete HKLM\SOFTWARE\Classes\*\shell\ArchiveMount /f
+    let _ = Command::new("Reg.exe").creation_flags(0x08000000)
+        .arg("delete").arg(r"HKLM\SOFTWARE\Classes\*\shell\ArchiveMount")
+        .arg("/f")
+        .output()?;
+    Ok(())
+}
+
+/// 设置DLL初始引用位置
+pub fn setDllDirectory(path: &Path) -> bool {
+    let path = OsStr::new(path).encode_wide().chain(once(0)).collect::<Vec<u16>>();
     let result;
     unsafe {
-        result = winapi::um::winbase::SetDllDirectoryW(aaa.as_ptr());
+        result = winapi::um::winbase::SetDllDirectoryW(path.as_ptr());
     }
     result != 0
 }
 
-pub fn convert_str(s: impl AsRef<str>) -> U16CString {
-    unsafe { U16CString::from_str_unchecked(s) }
-}
-
 /// 字符串转时间
-pub fn StringToSystemTime(time: &str) -> Result<SystemTime, Box<dyn Error>> {
+pub fn StringToSystemTime(time: &str) -> Result<SystemTime> {
     // println!("{}", time);
     let custom = NaiveDateTime::parse_from_str(time, "%Y-%m-%d %H:%M:%S")?;
     let date_time: DateTime<Local> = Local.from_local_datetime(&custom).unwrap();
     Ok(SystemTime::from(date_time))
-}
-
-/// 获取当前时间戳
-pub fn getCurrenTimestamp() -> i64 {
-    let start = SystemTime::now();
-    let since_the_epoch = start.duration_since(UNIX_EPOCH).unwrap();
-    since_the_epoch.as_secs() as i64 * 1000i64 + (since_the_epoch.subsec_nanos() as f64 / 1_000_000.0) as i64
 }
 
 // 增加字符串自定义方法
