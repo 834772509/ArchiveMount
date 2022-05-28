@@ -59,13 +59,6 @@ AR、ARJ、CAB、CHM、CPIO、CramFS、DMG、EXT、FAT、GPT、HFS、IHEX、ISO�
 本程序为命令行程序，故需要在其后面接参数运行，如直接双击程序将会出现“闪退”现象，您可通过`cmd`、`PowerShell`等终端来运行。  
 注意：请使用**管理员身份**运行终端。
 
-### 隐藏运行
-
-`ArchiveMount.exe -q 命令 参数`
-
-- `ArchiveMount.exe -q install`
-- `ArchiveMount.exe -q mount 压缩包路径 挂载路径 [缓存路径]`
-
 ### 安装驱动
 
 > 温馨提示: 如之前安装过Dokan驱动需要先卸载。
@@ -87,7 +80,7 @@ AR、ARJ、CAB、CHM、CPIO、CramFS、DMG、EXT、FAT、GPT、HFS、IHEX、ISO�
     - `ArchiveMount.exe mount D:\Archive.7z D:\Mount D:\Cache`
 - 挂载后打开: `ArchiveMount.exe mount 压缩包路径 挂载路径 -o`
     - `ArchiveMount.exe mount D:\Archive.7z Z: -o`
-- 不嵌套目录挂载: `ArchiveMount.exe mount 压缩包路径 挂载路径 -n`
+- 嵌套挂载点: `ArchiveMount.exe mount 压缩包路径 挂载路径 -n`
     - `ArchiveMount.exe mount D:\Archive.7z Z: -n`
 - 指定密码: `ArchiveMount.exe mount 压缩包路径 挂载路径 -p密码`
     - `ArchiveMount.exe mount D:\Archive.7z Z: -p123456`

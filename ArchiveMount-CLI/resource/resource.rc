@@ -1,0 +1,43 @@
+/* 文件信息 */
+#define VER_COMPANYNAME_STR           "ArchiveMount-CLI\0"
+#define VER_FILEDESCRIPTION_STR       "Mount Archive to virtual file system\0"
+#define VER_INTERNALNAME_STR          "ArchiveMount-CLI\0"
+#define VER_LEGALCOPYRIGHT_STR        "Copyright ? 2022\0"
+#define VER_ORIGINALFILENAME_STR      "ArchiveMount-CLI.exe\0"
+#define VER_PRODUCTNAME_STR           "ArchiveMount-CLI\0"
+
+/* 文件版本 */
+#define VER_FILEVERSION               0,4,0,0
+#define VER_FILEVERSION_STR           "0.4.0.0\0"
+
+/* 产品版本 */
+#define VER_PRODUCTVERSION            0,4,0,0
+#define VER_PRODUCTVERSION_STR        "0.4.0.0\0"
+
+1 VERSIONINFO
+FILEVERSION     VER_FILEVERSION
+PRODUCTVERSION  VER_PRODUCTVERSION
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904E4"
+        BEGIN
+            VALUE "CompanyName",      VER_COMPANYNAME_STR
+            VALUE "FileDescription",  VER_FILEDESCRIPTION_STR
+            VALUE "FileVersion",      VER_FILEVERSION_STR
+            VALUE "InternalName",     VER_INTERNALNAME_STR
+            VALUE "LegalCopyright",   VER_LEGALCOPYRIGHT_STR
+            VALUE "OriginalFilename", VER_ORIGINALFILENAME_STR
+            VALUE "ProductName",      VER_PRODUCTNAME_STR
+            VALUE "ProductVersion",   VER_PRODUCTVERSION_STR
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1252
+    END
+END
+
+/* 请求管理员权限 */
+#define RT_MANIFEST 24
+1 RT_MANIFEST "ArchiveMount-CLI.exe.manifest"
